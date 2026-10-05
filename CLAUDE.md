@@ -307,7 +307,7 @@ The artifact database, written by the page and seeded with `ArtifactData`:
 | `skin` | `theme`, and one per art slot (`panel`, `cat-meow`, `house`…) | `theme`: `{tokens: {"--ink": "#…", …}, dark: {…}, at}`, her colours and sizes in light, and what differs in dark (keep both keys when you write it: a missing `dark` loses her night colours). A slot's: her own piece for it: `src` (`/_blob/<asset>`, a gateway `/files/` path or `local:` in a browser), `asset`, `name`, `w`, `h`, and what it needs: `slice` [t, r, b, l], `frames`, `secs`, `pixel` or `scale`. No document: the pack's piece |
 | `dashboard` | `maps` | how she set the Project maps page: `order[]`, `pinned[]`, `hidden[]`, `wide[]` (graph slugs) |
 | `queens` | `house` | the queen of the house: `name`, `coat`, `manner` (how she speaks; the runner reads it each turn), `greeting`, `voice: {on, name, rate, pitch, lang}`, `readAt` (when Charlotte last opened her card: older handoffs are read), `notes[]` of `{text, pinned, at}`. A pinned note is one she says out loud. Older `queens/<room>` documents are hers until her first save |
-| `routines` | generated id | one of her routines: `name`, `time` ("HH:MM"), `days` (0–6, Sunday 0), `tz`, `prompt`, `on`, `last` (when the gateway last handed it to her runner). Only the gateway's copy runs: the runner reads the House, not the artifact |
+| `routines` | generated id | one of her routines: `name`, `time` ("HH:MM"), `days` (0–6, Sunday 0), `tz`, `prompt`, `on`, `last` (the firing the gateway last handed to her runner), `handed` (when), `finished` (the firing her runner answered), `retried` (a lost firing handed out once more). Only the gateway's copy runs: the runner reads the House, not the artifact |
 | `layouts` | the room key | *(planned: Build mode, `docs/camera-and-minimap.md`)* the room's furniture, and `cabinet: {look, x, y}`: the piece its filing cabinet looks like (her choice per room) and where it stands. The cabinet never leaves its room and keeps its Files and review spot whatever it looks like. No document: `MANOR.layout` and the default look |
 | `snapshot` | `sessions` | `{at, savedBy, sessions[]}`: Claude's saved copy of `list_sessions`, shown when the live read is blocked. Written only by Claude, with `ArtifactData` |
 
@@ -330,6 +330,13 @@ that inflates "3 need you" makes the sign a liar.
   `owner`) and hers (author `queen`, which only the runner's key may write). In the gateway café a `{type:
   "queen"}` push (`catio:queen`) grows her live bubble as she speaks and her voice says each sentence; in claude.ai
   her card polls `comments` every 5 s. Stop is `manage {cat: "queen", action: "pause"}`.
+- **Her turn as it goes** (her ask, 4 October: a loading state like Claude's own, from the games of the early 2000s she
+  picked in `docs/queen-loading/wireframes.html`): `#queenWork`, under the talk on her side. From your Send until her
+  runner's first word it is Animal Crossing's pause (her name on a tab, the dots, the seconds); then The Sims' action
+  queue (each step done a ticked tile, the one she is on lit, unfolding to every step and its time; the runner sends
+  `steps`, the page names them with `stepWords()`); a wait over 45 s gets a loading tip; Stop turns the lit tile pink.
+  Her live bubble ends in the pack's triangle turned down, and she bobs only once she has words. Away, with your words
+  waiting, it is one line saying why. In claude.ai, with no push, it is "Thinking" until her answer turns up.
 - **Her card is a scene** (`openQueen(section)`, her ask of 3 October, like an RPG's dialogue): the owner of the house
   on the left, seen from behind in her armchair (`ownerSVG()`, pixel art drawn in code since no pack has people,
   dressed from `house/main.owner`: hair, hair colour, top, skin and a bow, cat ears or a flower); the queen on the
@@ -467,7 +474,7 @@ its Stop hook hands in what she sent. Workers Builds deploys it on every merge t
 - **The queen's routes:** `POST /api/runner/wait` (held up to 25 s: her notes, a routine due, a stop, her
   character) and `POST /api/runner/say` (a turn as it streams; `done` stores her note), the queen's key only.
   Routines are `routines/<id>` documents; the House's alarm wakes a waiting runner when one comes due, and a
-  missed one runs once when the runner is back. `list_agents` gives each cat its `said`; `inbox` hands a cat
+  missed one runs once when the runner is back, and one her runner never finished goes out once more after ten minutes. `list_agents` gives each cat its `said`; `inbox` hands a cat
   what Charlotte and the queen say (`[Catio] The queen says: …` in the hook).
 - **Only Claude's connectors may register** (redirects to `claude.ai` or `claude.com`).
 - **Keep its tools in step with `catio_mcp.py`**: same names, arguments and results, so the page and agents
