@@ -57,16 +57,16 @@ function startDecider() {
 }
 
 // wrangler dev on a fresh state; again on the same state, at the end, as a deploy would start a new isolate
-async function start() {
+async function start({ password = PASSWORD, dir = state, vars = [] } = {}) {
 	const [port, inspector] = [await freePort(), await freePort()];
 	base = `http://127.0.0.1:${port}`;
 	log = "";
 	// the real config without its AI binding (remote, needs a Cloudflare sign-in): decisions go to the stand-in instead
 	writeFileSync(CONFIG, readFileSync(join(HERE, "wrangler.jsonc"), "utf8").replace(/^\s*"ai":.*\n/m, ""));
 	wrangler = spawn(process.execPath, [join(HERE, "node_modules/wrangler/bin/wrangler.js"), "dev", "--config", CONFIG, "--ip", "127.0.0.1",
-		"--port", String(port), "--inspector-port", String(inspector), "--persist-to", state,
-		"--var", "CATIO_TOKEN:" + TOKEN, "--var", "CATIO_PASSWORD:" + PASSWORD, "--var", "CATIO_QUEEN:" + QUEEN,
-		"--var", "DECIDE_URL:http://127.0.0.1:" + deciderPort + "/", "--var", "DECIDE_KEY:k1"], {
+		"--port", String(port), "--inspector-port", String(inspector), "--persist-to", dir,
+		"--var", "CATIO_TOKEN:" + TOKEN, ...(password ? ["--var", "CATIO_PASSWORD:" + password] : []), "--var", "CATIO_QUEEN:" + QUEEN,
+		"--var", "DECIDE_URL:http://127.0.0.1:" + deciderPort + "/", "--var", "DECIDE_KEY:k1", ...vars.flatMap((v) => ["--var", v])], {
 		cwd: HERE, env: { ...process.env, WRANGLER_SEND_METRICS: "false", NO_COLOR: "1" }, stdio: ["ignore", "pipe", "pipe"],
 		detached: true,   // its own process group, so workerd goes with it
 	});
@@ -367,6 +367,94 @@ describe("accounts", () => {
 		assert.equal((await as(herCookie, "/api/users/tester", { method: "PUT", body: JSON.stringify({ password: TESTER_NOW }) })).status, 200);
 		assert.equal((await login("tester", TESTER_NOW)).status, 303);
 	});
+
+	test("lets an admin invite someone, who makes their own account with it, once", async () => {
+		const SIGNUP = "guest-password-" + randomBytes(6).toString("hex");
+		const invite = (cookie, what = "make", headers = {}) => fetch(base + "/invite", { method: "POST", headers: { Cookie: cookie, ...headers }, body: new URLSearchParams({ do: what }), redirect: "manual" });
+		const signUp = (fields) => fetch(base + "/signup", { method: "POST", body: new URLSearchParams({ again: fields.password, ...fields }), redirect: "manual" });
+		const codeOf = async (r) => /\/signup\?invite=([0-9a-f]{64})"/.exec(await r.text())?.[1];
+
+		assert.match(await (await fetch(base + "/")).text(), /href="\/signup"/, "the sign-in page points the invited to sign-up");
+		assert.match(await (await fetch(base + "/invite")).text(), /Your handle/, "signed out, the invite page asks who you are");
+		const { cookie: testerCookie } = await login("tester", TESTER_NOW);
+		assert.equal((await fetch(base + "/invite", { headers: { Cookie: testerCookie } })).status, 403, "only an admin invites");
+		assert.equal((await invite(testerCookie)).status, 403);
+		assert.equal((await invite(herCookie, "make", { Origin: "https://elsewhere.example" })).status, 403, "never from another site");
+		const made = await invite(herCookie);
+		assert.equal(made.status, 200);
+		const code = await codeOf(made);
+		assert.ok(code, "the invite is shown as a link");
+		assert.match(await (await fetch(base + "/invite", { headers: { Cookie: herCookie } })).text(), /1 invite is out/);
+		assert.match(await (await fetch(base + "/signup?invite=" + code)).text(), new RegExp(`value="${code}"`), "the link fills the invite in");
+
+		assert.equal((await signUp({ invite: "0".repeat(64), user: "guest", password: SIGNUP })).status, 400, "a made-up invite opens nothing");
+		assert.equal((await signUp({ invite: code, user: "guest", password: SIGNUP, again: SIGNUP + "x" })).status, 400, "the two passwords must match");
+		assert.equal((await signUp({ invite: code, user: "tester", password: SIGNUP })).status, 400, "a taken handle stays taken");
+		assert.equal((await signUp({ invite: code, user: "guest", password: "short" })).status, 400);
+		// a refused sign-up costs the invite nothing; two at once with one invite let one in
+		const both = await Promise.all(["guest", "guest-two"].map((user) => signUp({ invite: code, user, password: SIGNUP })));
+		// the first user test (5 October): a form sign-up now lands on "your café is ready", its first key shown once,
+		// instead of going straight into an empty café with no key and no word of the plugin
+		assert.deepEqual(both.map((r) => r.status).sort(), [200, 400], "an invite works once");
+		const inRes = both.find((r) => r.status === 200);
+		const guest = inRes === both[0] ? "guest" : "guest-two";
+		const guestCookie = inRes.headers.get("set-cookie").split(";")[0];
+		const ready = await inRes.text();
+		assert.match(ready, /Your café is ready/);
+		assert.match(ready, /kittychat-house-rules@kittychat/, "the plugin's install lines");
+		assert.ok(ready.includes("<code>" + base + "</code>"), "the café's own address");
+		const guestKey = /value="([0-9a-f]{64})" aria-label="Your key"/.exec(ready)?.[1];
+		assert.ok(guestKey, "the key, once");
+		await tool(guestKey, "report_status", { agent: "guest-cat", mood: "busy" });
+		assert.deepEqual((await tool(guestKey, "list_agents")).agents.map((a) => a.id), ["guest-cat"], "the key is theirs, in their café");
+		assert.ok(!(await tool(TOKEN, "list_agents")).agents.some((a) => a.id === "guest-cat"), "and not in hers");
+		assert.deepEqual((await (await as(guestCookie, "/api/db")).json()).docs, {}, "signed in to a café of their own");
+		assert.equal((await login(guest, SIGNUP)).status, 303);
+		assert.equal((await fetch(base + "/invite", { headers: { Cookie: guestCookie } })).status, 403, "a guest is no admin");
+		assert.equal((await as(guestCookie, "/api/users", { method: "POST", body: JSON.stringify({ id: "third", password: SIGNUP }) })).status, 403);
+		assert.equal((await as(guestCookie, "/art/licensed/pochi.png")).status, 404, "the packs' art is hers alone");
+		assert.equal((await as(herCookie, "/art/licensed/pochi.png")).status, 200);
+
+		// unused invites can be taken back
+		const spare = await codeOf(await invite(herCookie));
+		assert.match(await (await invite(herCookie, "drop")).text(), /1 invite taken back/);
+		assert.equal((await signUp({ invite: spare, user: "late", password: SIGNUP })).status, 400);
+	});
+
+	test("lets a browser post the sign-in, invite and sign-up forms with the café's own Origin", async () => {
+		// under no-referrer, Chrome posts a form with "Origin: null", and /invite and /signup refuse it (5 October:
+		// "Make invites from this page" on her own click); same-origin sends the café's address and nothing elsewhere
+		for (const path of ["/", "/invite", "/signup"]) assert.equal((await fetch(base + path)).headers.get("referrer-policy"), "same-origin", path);
+		assert.equal((await fetch(base + "/invite", { method: "POST", headers: { Cookie: herCookie, Origin: base }, body: new URLSearchParams({ do: "make" }) })).status, 200);
+	});
+
+	test("lets someone's AI use the invite for them, and gives it the account's first key, once", async () => {
+		const PARTNER = "partner-password-" + randomBytes(6).toString("hex");
+		const made = await fetch(base + "/invite", { method: "POST", headers: { Cookie: herCookie }, body: new URLSearchParams({ do: "make" }) });
+		const code = /\/signup\?invite=([0-9a-f]{64})"/.exec(await made.text())[1];
+		const page = await (await fetch(base + "/signup?invite=" + code)).text();
+		assert.ok(page.includes("as their AI?") && page.includes(`"invite": "${code}"`) && page.includes(base + "/mcp"), "the link says what an AI does");
+		assert.ok(!(await (await fetch(base + "/signup")).text()).includes("as their AI?"), "not without an invite");
+		assert.ok(page.includes("kittychat-house-rules@kittychat") && page.includes("Without the plugin the two variables do"), "the two variables need the plugin's hook");
+
+		const use = (body, headers = {}) => fetch(base + "/signup", { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
+		const short = await use({ invite: code, handle: "partner", password: "short" });
+		assert.equal(short.status, 400);
+		assert.equal((await short.json()).code, "bad_request", "an AI gets JSON back");
+		assert.equal((await use({ invite: code, handle: "partner", password: PARTNER }, { Origin: "https://elsewhere.example" })).status, 403, "never from another site");
+		const r = await use({ invite: code, handle: "Partner", password: PARTNER });
+		assert.equal(r.status, 201, "a refused try left the invite as it was");
+		const { handle, key: theirKey, mcp } = await r.json();
+		assert.deepEqual([handle, mcp], ["partner", base + "/mcp"]);
+		assert.match(theirKey, /^[0-9a-f]{64}$/);
+		assert.equal((await use({ invite: code, handle: "partner-two", password: PARTNER })).status, 400, "an invite works once");
+
+		// the key reports into their own house, and the password signs them in to their café
+		assert.equal((await tool(theirKey, "report_status", { agent: "partner-cat", mood: "busy" })).ok, true);
+		assert.deepEqual((await tool(theirKey, "list_agents")).agents.map((a) => a.id), ["partner-cat"]);
+		assert.ok(!(await tool(TOKEN, "list_agents")).agents.some((a) => a.id === "partner-cat"));
+		assert.equal((await login("partner", PARTNER)).status, 303);
+	});
 });
 
 // The queen of the house: Charlotte talks to her in the café; her runner (harness/runner) waits here with the
@@ -534,6 +622,56 @@ describe("the queen", () => {
 		assert.deepEqual((await tool(her, "quizzes", { done: true })).quizzes.filter((z) => z.kind !== "unblock" && z.kind), []);
 	});
 
+	test("counts her homework in the runner's wait, so her runner can say it on Charlotte's own desktop", async () => {
+		// a word to her brings the wait back at once, instead of its full 25 seconds
+		const now = async () => { await tool(her, "comment", { cat: "queen", text: "." }); return (await wait()).homework; };
+		const before = await now();
+		assert.equal(typeof before, "object", "the counts come with every wait, however few");
+		await tool(her, "quiz", { kind: "litterbox", ref: "where-does-this-go", title: "Where does this go?", note: "One note to sort",
+			questions: [{ q: "Which project?", options: ["kittychat", "Settled: drop it"] }] });
+		const after = await now();
+		assert.equal(after.litterbox || 0, (before.litterbox || 0) + 1, "one more note to sort");
+		assert.ok(Object.values(after).every((n) => Number.isInteger(n) && n > 0), "counts by kind, and nothing else");
+	});
+
+	test("brings a design tokens file into her look and gives it back, for a session with the Figma connector", async () => {
+		const FIX = join(HERE, "../test/fixtures/");
+		const figma = JSON.parse(readFileSync(FIX + "tokens-figma.json", "utf8")), want = JSON.parse(readFileSync(FIX + "tokens-figma.expected.json", "utf8"));
+		const sorted = (o) => Object.fromEntries(Object.entries(o).sort());
+		const page = readFileSync(join(HERE, "../../catio/index.html"), "utf8");
+		const count = (page.slice(page.indexOf("const TOKENS = {"), page.indexOf("};", page.indexOf("const TOKENS = {"))).match(/"--[\w-]+": \[/g) || []).length;
+		const hexOf = (f, g, n) => f[g][n].$value.hex;
+		// anyone in the house may read it: every token of The look, in its groups, at the café's own values
+		const first = await tool(TOKEN, "tokens");
+		assert.equal(first.mode, "light");
+		assert.equal(Object.values(first.file).filter((g) => g && typeof g === "object").reduce((n, g) => n + Object.keys(g).filter((k) => !k.startsWith("$")).length, 0), count);
+		const ink = (/--ink:\s*(#[0-9A-Fa-f]{6})/.exec(page) || [])[1];
+		assert.equal(hexOf(first.file, "colours", "ink"), ink.toLowerCase());
+		// only she and the queen change her look: a leaked agents' key can't restyle the café
+		assert.match((await tool(TOKEN, "set_tokens", { file: figma })).refused, /only the owner or the queen/);
+		// her Figma file: what the page, skin.py and catio_mcp.py find in it, and kept as The look keeps it
+		const r = await tool(her, "set_tokens", { file: figma });
+		assert.deepEqual([r.mode, r.tokens, r.foreign, r.refused], ["light", Object.keys(want.found).length, want.foreign, want.refused]);
+		const theme = (await (await api("/api/db")).json()).docs["skin/theme"];
+		assert.deepEqual(sorted(theme.tokens), sorted(want.found));
+		assert.equal(hexOf((await tool(TOKEN, "tokens")).file, "colours", "ink"), "#1d3557");
+		// the queen sets the night: dark says only what differs, and light stays
+		assert.equal((await tool(QUEEN, "set_tokens", { mode: "dark", file: JSON.stringify({ colours: { ink: { $value: "#eeeeee" } } }) })).changed, 1);
+		assert.equal((await tool(QUEEN, "set_tokens", { mode: "dark", file: { colours: { grass: { $value: "#5A8F29" } } } })).changed, 0);   // as in light: not kept
+		assert.deepEqual((await (await api("/api/db")).json()).docs["skin/theme"].dark, { "--ink": "#eeeeee" });
+		assert.equal(hexOf((await tool(TOKEN, "tokens", { mode: "dark" })).file, "colours", "ink"), "#eeeeee");
+		assert.equal(hexOf((await tool(TOKEN, "tokens", { mode: "dark" })).file, "colours", "grass"), "#5a8f29");
+		// replace: the file is the whole of light
+		await tool(her, "set_tokens", { replace: true, file: { colours: { grass: { $value: "#5A8F29" } } } });
+		assert.deepEqual((await (await api("/api/db")).json()).docs["skin/theme"].tokens, { "--grass": "#5A8F29" });
+		assert.match((await tool(her, "set_tokens", { file: { brand: { red: { $value: "#ff0000" } } } })).refused, /none of the café's tokens \(1 of its own\)/);
+		assert.match((await tool(her, "set_tokens", { mode: "dusk", file: figma })).refused, /mode is light or dark/);
+		// back as it was: nothing of hers left in either mode, no theme kept
+		await tool(her, "set_tokens", { replace: true, file: { colours: { ink: { $value: ink } } } });
+		await tool(her, "set_tokens", { mode: "dark", replace: true, file: { colours: { ink: { $value: ink } } } });
+		assert.equal((await (await api("/api/db")).json()).docs["skin/theme"], undefined);
+	});
+
 	test("runs a routine once when it comes due", async () => {
 		const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Paris", hourCycle: "h23", hour: "numeric", minute: "numeric" })
 			.formatToParts(new Date()).map((p) => [p.type, p.value]));
@@ -588,7 +726,7 @@ describe("the gateway", () => {
 		assert.equal(init.result.serverInfo.name, "catio");
 		const { result } = await rpc(TOKEN, "tools/list", {});
 		assert.deepEqual(result.tools.map((t) => t.name),
-			["house_rules", "report_status", "list_agents", "inbox", "pick_up", "drop_file", "comment", "comments", "manage", "quiz", "quizzes", "forget", "decide", "answer"]);
+			["house_rules", "report_status", "list_agents", "inbox", "pick_up", "drop_file", "comment", "comments", "manage", "quiz", "quizzes", "forget", "decide", "tokens", "set_tokens", "answer"]);
 		const rules = await tool(TOKEN, "house_rules");
 		assert.ok(rules.rules.some((r) => r.id === "ship"));
 		assert.equal((await tool(TOKEN, "nope")).rpcError.code, -32602);
@@ -875,5 +1013,92 @@ print(n)`, ...dbs], { encoding: "utf8" }).trim();
 		assert.equal((await fetch(base + "/api/runner/say", { method: "POST", headers: { Authorization: "Bearer " + QUEEN, "Content-Type": "application/json" }, body: JSON.stringify({ turn: "t9", text: "", done: true }) })).status, 200);
 		const asHer = await fetch(base + "/login", { method: "POST", body: new URLSearchParams({ user: "charlotte", password: PASSWORD }), redirect: "manual" });
 		assert.equal(asHer.status, 429, "the lock from the gateway suite is in the registry, not in the isolate");
+	});
+});
+
+// After that, on the same state: CATIO_PASSWORD changed in Cloudflare (issue #100). Her handle is still locked from
+// the gateway suite, so a sign-in that gets past the lock is one the registry let in again.
+describe("a changed CATIO_PASSWORD", () => {
+	const login = (password) => fetch(base + "/login", { method: "POST", body: new URLSearchParams({ user: "charlotte", password }), redirect: "manual" });
+	const restart = async (password) => { stop(); await new Promise((r) => setTimeout(r, 500)); await start({ password }); };
+	test("is noted by a registry from before, and becomes her password when it changes after that", async () => {
+		stop();
+		await new Promise((r) => setTimeout(r, 500));
+		// a registry made before the gateway kept the secret it last read has none
+		const dbs = [];
+		const walk = (d) => { for (const f of readdirSync(d)) { const p = join(d, f); if (statSync(p).isDirectory()) walk(p); else if (f.endsWith(".sqlite")) dbs.push(p); } };
+		walk(state);
+		const forgot = execFileSync("python3", ["-c", `
+import sqlite3, sys
+n = 0
+for p in sys.argv[1:]:
+    c = sqlite3.connect(p)
+    try:
+        if c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='seen'").fetchone():
+            n += c.execute("DELETE FROM seen").rowcount
+            c.commit()
+    finally:
+        c.close()
+print(n)`, ...dbs], { encoding: "utf8" }).trim();
+		assert.equal(forgot, "1", "the first run kept the secret it read");
+		const NEW = "new-password-" + randomBytes(8).toString("hex"), NEWER = "newer-password-" + randomBytes(8).toString("hex");
+		await start({ password: NEW });
+		assert.equal((await login(NEW)).status, 429, "only noted: the password and its lock stand");
+		await restart(NEWER);
+		const old = await login(PASSWORD);
+		assert.equal(old.status, 401, "the lock lifted, and the old password is out");
+		assert.match(await old.text(), /CATIO_HANDLE as it was when the gateway first ran \(charlotte if it wasn&#39;t set\)/, "a refusal says where the handle comes from");
+		const signedIn = await login(NEWER);
+		assert.equal(signedIn.status, 303);
+		const cookie = signedIn.headers.get("set-cookie").split(";")[0];
+		const keys = () => fetch(base + "/api/keys", { headers: { Cookie: cookie, "X-Catio": "1" } });
+		assert.equal((await keys()).status, 200);
+		await restart(NEWER);
+		assert.equal((await keys()).status, 200, "the same secret again changes nothing: she is still signed in");
+	});
+});
+
+// A fresh gateway with no account says which of the two is wrong with CATIO_PASSWORD: missing, or too short.
+describe("no account yet", () => {
+	test("says whether CATIO_PASSWORD is missing or too short", async () => {
+		for (const [password, says, not] of [["", /CATIO_PASSWORD isn(?:'|&#39;)t set for this Worker/, /under 16/], ["too-short", /CATIO_PASSWORD is under 16 characters/, /t set for this Worker/]]) {
+			stop();
+			await new Promise((r) => setTimeout(r, 500));
+			const dir = mkdtempSync(join(tmpdir(), "catio-gateway-empty-"));
+			try {
+				await start({ password, dir });
+				const page = await fetch(base + "/");
+				assert.equal(page.status, 503);
+				const text = await page.text();
+				assert.match(text, says);
+				assert.doesNotMatch(text, not);
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
+		}
+	});
+
+	// The first outside run (docs/plan.md, "The first player"): his page said "no account yet" and he couldn't tell
+	// which secret was wrong. The page now lights each one the Worker sees, never its value, and says the handle.
+	test("lights each secret the Worker sees, and says what the handle will be", async () => {
+		for (const [vars, says] of [[[], [/CATIO_PASSWORD isn(?:'|&#39;)t set for this Worker/, /CATIO_HANDLE isn(?:'|&#39;)t set, so your handle will be charlotte/,
+			/CATIO_TOKEN is set\./, /CATIO_QUEEN is set\./, /This is what the Worker at 127\.0\.0\.1:\d+ sees/]],
+		[["CATIO_HANDLE:Dog_Den"], [/CATIO_HANDLE isn(?:'|&#39;)t a handle/]]]) {
+			stop();
+			await new Promise((r) => setTimeout(r, 500));
+			const dir = mkdtempSync(join(tmpdir(), "catio-gateway-empty-"));
+			try {
+				await start({ password: "", dir, vars });
+				for (const path of ["/", "/signup"]) {
+					const page = await fetch(base + path, path === "/signup" ? { method: "POST", headers: { Origin: base }, body: new URLSearchParams({ invite: "x" }) } : {});
+					assert.equal(page.status, 503, path);
+					const text = await page.text();
+					for (const re of says) assert.match(text, re, path);
+					assert.doesNotMatch(text, /her-password-|agent-key-|queen-key-/, "a light never shows a secret's value");
+				}
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
+		}
 	});
 });

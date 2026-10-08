@@ -1226,6 +1226,28 @@ const menuButton = (page, name) => page.locator("#menu").getByRole("button", { n
     await page.mouse.move(8, 8);
     await settle(page);
   });
+  await check("after a skin redraws the furniture, a filing cabinet under the pointer still outlines the cabinet", async () => {
+    await page.evaluate(() => { for (const p of document.querySelectorAll("#props .piece")) p.dataset.old = "1"; window.__catio.put("skin/cat-work", { src: "art/licensed/mochi-idle.png", at: 1 }); });   // a cat of hers: the house is drawn again
+    try {
+      await page.waitForFunction(() => document.querySelector("#props .piece") && !document.querySelector("#props .piece[data-old]"), null, { timeout: 5000 });
+      const cab = await page.locator('#hits .cabinet[data-room="kitchen"]').boundingBox();
+      await page.mouse.move(cab.x + cab.width / 2, cab.y + cab.height / 2, { steps: 3 });
+      await settle(page);
+      const on = await page.evaluate(() => [...document.querySelectorAll("#props .piece")].filter((e) => getComputedStyle(e).filter.includes("drop-shadow")).map((e) => e.dataset.room + "/" + e.dataset.piece));
+      expect(on.length === 1 && on[0] === "kitchen/filing_cabinet", "outlined: " + JSON.stringify(on));
+      // and with the pointer still on it, a redraw outlines the new piece
+      await page.evaluate(() => { for (const p of document.querySelectorAll("#props .piece")) p.dataset.old = "1"; window.__catio.drop("skin/cat-work"); });
+      await page.waitForFunction(() => document.querySelector("#props .piece") && !document.querySelector("#props .piece[data-old]"), null, { timeout: 5000 });
+      const still = await page.evaluate(() => [...document.querySelectorAll("#props .piece")].filter((e) => getComputedStyle(e).filter.includes("drop-shadow")).map((e) => e.dataset.room + "/" + e.dataset.piece));
+      expect(still.length === 1 && still[0] === "kitchen/filing_cabinet", "after the redraw, outlined: " + JSON.stringify(still));
+    } finally {
+      await page.mouse.move(8, 8); await settle(page);
+      if (await page.evaluate(() => !!window.__catio.store["skin/cat-work"])) {
+        await page.evaluate(() => { for (const p of document.querySelectorAll("#props .piece")) p.dataset.old = "1"; window.__catio.drop("skin/cat-work"); });
+        await page.waitForFunction(() => !document.querySelector("#props .piece[data-old]"), null, { timeout: 5000 });
+      }
+    }
+  });
   await openRoom(page, "kitchen");
   await check("the room under the pointer, and the one its menu belongs to, light up with the white brackets", async () => {
     const ring = await page.locator("#room-kitchen").evaluate((e) => e.classList.contains("lit") && getComputedStyle(e).borderImageSource);
@@ -1662,11 +1684,59 @@ const menuButton = (page, name) => page.locator("#menu").getByRole("button", { n
     expect(await page.locator("#mmRooms .mm-room.landing:not(.faint)").count() === 1, "no landing");
   });
   await page.click("#floor-ground");
+  const whole = await rect("#controls");
   await page.click("#mapFold");
   await check("the fold button folds the map away and says so", async () => {
     expect(!(await page.locator("#minimap").isVisible()), "still showing");
     expect((await page.locator("#mapFold").getAttribute("aria-expanded")) === "false", "aria-expanded");
   });
+  // her ask, 5 October: "allow the mini-map to be minimizable": the whole panel, not just the plan
+  await check("minimised, the panel is its one button, in the corner it was in", async () => {
+    for (const id of ["zoomIn", "zoomOut", "zoomAll", "floor-ground", "floor-upper"])
+      expect(!(await page.locator("#" + id).isVisible()), id + " still shows");
+    const p = await rect("#controls");
+    expect(p.w < 90 && p.h < 70, "more than one button: " + JSON.stringify(p));
+    expect(Math.abs(p.x + p.w - (whole.x + whole.w)) < 1 && Math.abs(p.y - whole.y) < 1, "it moved: " + JSON.stringify([whole, p]));
+  });
+  await page.locator("#stage").click({ position: { x: 60, y: 800 } });
+  await page.keyboard.press("PageUp");
+  await settle(page);
+  await check("minimised, its button carries the pip the hidden floor tab would have", async () => {
+    expect(await page.locator("#mapFold .pip").count() === 1, "no pip");
+    const n = (await page.locator("#mapFold .pip").innerText()).trim(), ground = (await page.locator("#floor-ground .pip").innerText()).trim();
+    expect(n === ground, "it counts " + n + ", the hidden ground floor tab " + ground);
+    expect(/need you/.test(await page.locator("#mapFold").getAttribute("aria-label")), "its name doesn't say so");
+  });
+  await page.keyboard.press("PageDown");
+  await settle(page);
+  await openRoom(page, "living");
+  await page.keyboard.press("m");
+  await settle(page);
+  await check("a menu open as the panel opens finds its place clear of it again", async () => {
+    expect(await page.locator("#minimap").isVisible(), "M didn't open it");
+    expect(await page.locator("#menu").isVisible(), "the menu closed");
+    expect(await clear(), "the menu is under the panel");
+  });
+  await closeMenu(page);
+  await page.focus("#zoomIn");
+  await page.keyboard.press("m");
+  await check("minimising from one of its buttons leaves the keyboard on the fold", async () => {
+    expect(!(await page.locator("#minimap").isVisible()), "still open");
+    expect((await page.evaluate(() => document.activeElement && document.activeElement.id)) === "mapFold", "focus fell off");
+  });
+  await page.locator("#room-living").focus();
+  await page.keyboard.press("Enter");
+  await settle(page);
+  const onItem = () => page.evaluate(() => { const a = document.activeElement; return !!a && document.getElementById("menu").contains(a) ? a.textContent : null; });
+  const item = await onItem();
+  await page.keyboard.press("m");
+  await settle(page);
+  await check("opening the panel from inside a menu keeps the keyboard on the same item", async () => {
+    expect(item !== null, "Enter didn't step into the menu");
+    expect((await onItem()) === item, "focus fell off: " + item);
+  });
+  await page.keyboard.press("Escape"); await page.keyboard.press("Escape");
+  await page.click("#mapFold");
   await page.reload(); await page.waitForTimeout(600);
   await check("folded stays folded after a reload", async () => expect(!(await page.locator("#minimap").isVisible()), "open again"));
   await page.locator("#stage").click({ position: { x: 60, y: 800 } });
@@ -1689,6 +1759,13 @@ const menuButton = (page, name) => page.locator("#menu").getByRole("button", { n
     const r = await page.locator("#controls").boundingBox();
     expect(r.y + r.height > 780, "not at the bottom: " + JSON.stringify(r));
   });
+  await page.locator("#mapFold").tap();
+  await check("on a phone, opened, the fold stays in the bottom right corner, under her thumb", async () => {
+    expect(await page.locator("#minimap").isVisible(), "the tap didn't open it");
+    const f = await page.locator("#mapFold").boundingBox(), r = await page.locator("#controls").boundingBox();
+    expect(r.x + r.width - (f.x + f.width) < 20 && r.y + r.height - (f.y + f.height) < 20, "the fold isn't in the corner: " + JSON.stringify([f, r]));
+  });
+  await page.locator("#mapFold").tap();
   await cat.tap();
   await settle(page);
   await check("on a phone, tapping a cat opens its menu instead of the full card", async () => {
@@ -2347,6 +2424,33 @@ if (LOCAL) {
   });
   await ctx.close();
 }
+// The walkthrough's localhost player: catio_mcp.py --serve answers its tools by POST only, so the page must ask it that
+// way; and with no front desk the queen can't wake, so she says so instead of "start her runner".
+if (LOCAL) {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+  const page = await ctx.newPage();
+  const errors = [], asked = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.route("**/api/list_agents", (r) => {
+    asked.push(r.request().method());
+    if (r.request().method() !== "POST") return r.fulfill({ status: 404, contentType: "application/json", body: '{"error": "the tools are POST only"}' });
+    return r.fulfill({ contentType: "application/json", body: JSON.stringify({ agents: [] }) });
+  });
+  await page.goto(LOCAL);
+  for (let i = 0; i < 100 && asked.length < 2; i++) await page.waitForTimeout(50);   // the probe, then refreshAgents: up to 5 s
+  await check("on localhost the page asks catio_mcp.py --serve for its agents by POST", async () =>
+    expect(asked.length >= 2 && asked.every((m) => m === "POST"), "asked by " + asked.join(", ")));
+  await toFloor(page, "ground");
+  await page.mouse.move(8, 8);
+  await page.locator("#cats .cat.queen").hover();
+  await settle(page);
+  await check("on localhost the queen's hover says she only wakes with a front desk, not to start a runner", async () => {
+    const t = await page.locator("#tip").innerText();
+    expect(t.includes("front desk") && !t.includes("runner"), t);
+    expect(errors.length === 0, errors.join("; "));
+  });
+  await ctx.close();
+}
 
 /* ---------- 9. the UI audit's leftovers (phase 0): alerts that stay, the sorter's time limit, Still cats ---------- */
 {
@@ -2407,6 +2511,20 @@ const wizard = (page) => page.waitForSelector("#setupDlg[open]", { timeout: 4000
   const { page, ctx } = await open("");
   await page.waitForTimeout(1500);   // past the second the wizard gives the rooms
   await check("a café with rooms never sees the wizard", async () => expect(await page.locator("#setupDlg[open]").count() === 0, "wizard open"));
+  await ctx.close();
+}
+// The first user test (5 October): with no licensed art, which is every invited guest and every fresh clone, the
+// Welcome step threw "NOART is not defined" and the wizard never opened.
+{
+  const { page, ctx, errors } = await open("?mode=empty", { base: NOART });
+  await check("with no licensed art the wizard still opens on Welcome, saying once that the art isn't here", async () => {
+    await wizard(page);
+    expect(await page.locator("#setupDlg[open]").count() === 1, "wizard not open");
+    const words = await page.locator("#setupDlg").innerText();
+    expect(words.split("The cat art isn't here").length === 2, "the art note, not once: " + words);
+    expect(words.split("All your Claude chats").length === 2, "the welcome, not once: " + words);
+    expect(!errors.some((e) => /NOART|ReferenceError/.test(e)), errors.join(" | "));
+  });
   await ctx.close();
 }
 {
@@ -2708,6 +2826,121 @@ const wizard = (page) => page.waitForSelector("#setupDlg[open]", { timeout: 4000
   });
   await ctx.close();
 }
+// The walkthrough's invitee, on the café's own address: no GitHub button that can only fail, the cats that checked in
+// counted, and How it works saying the plugin is how a cat checks in, where to type the lines and the two variables.
+{
+  const { page, ctx, errors } = await open("?via=gateway&mode=empty");
+  const nextStep = async () => { await page.click("#setupDlg button[type=submit]"); await settle(page); };
+  await wizard(page);
+  await nextStep(); await nextStep();
+  await check("on its own address the GitHub step offers no Connect GitHub, and says to file repositories under Edit rooms", async () => {
+    const t = await page.locator("#setupDlg").innerText();
+    expect(await page.locator("#ghConnect").count() === 0, "a Connect GitHub that can only fail");
+    expect(t.includes("Edit rooms") && !t.includes("Claude GitHub App"), t);
+  });
+  await nextStep();
+  await check("on its own address the Sessions step counts the cats that checked in", async () => {
+    const t = await page.locator("#setupDlg").innerText();
+    expect((await page.locator("#setupTitle").innerText()) === "Sessions", await page.locator("#setupTitle").innerText());
+    expect(t.includes("2 cats have checked in"), t);
+  });
+  await nextStep(); await nextStep();
+  await check("on its own address How it works says the plugin checks the cats in, where to type it, and CATIO_URL and CATIO_TOKEN", async () => {
+    const t = await page.locator("#setupDlg").innerText();
+    expect(t.includes("check-in") && t.includes("terminal") && t.includes("CATIO_URL") && t.includes("CATIO_TOKEN"), t);
+    expect((await page.locator("#cafeAddress").innerText()).startsWith("CATIO_URL="), "no address");
+  });
+  await check("no page errors through the wizard on its own address", async () => expect(errors.length === 0, errors.join("; ")));
+  await ctx.close();
+}
+// The first outside player (5 October) made his Antigravity agent's key by pasting a fetch into the browser's console,
+// because the café had no button for it. On its own address the House menu has Keys: the account's keys by name, each
+// with a Delete that asks first, and Make a key, which shows the new key once beside CATIO_URL, and nowhere else.
+{
+  const { page, ctx, errors } = await open("?via=gateway");
+  const T0 = (f, a) => page.evaluate(f, a);
+  const keysOpen = async () => { await openHouse(page); await menuButton(page, "Keys").click(); await settle(page); };
+  await openHouse(page);
+  await check("on its own address the House menu has Keys, opening the account's keys by name", async () => {
+    expect(await menuButton(page, "Keys").count() === 1, await menuText(page));
+    await menuButton(page, "Keys").click(); await settle(page);
+    expect(await page.locator("#keysDlg[open]").count() === 1, "no Keys card");
+    const t = await page.locator("#keysDlg").innerText();
+    expect(/report to this café as a cat/.test(t) && /shown once/.test(t) && /password manager/.test(t), t);
+    expect(await page.locator('#keyList li[data-key="bootstrap"]').count() === 1 && await page.locator('#keyList li[data-key="queen"]').count() === 1, t);
+  });
+  let key = "";
+  await check("Make a key shows the new key once, with CATIO_URL as the café's address and CATIO_TOKEN as the key", async () => {
+    await page.fill("#keyName", "laptop");
+    await page.click("#keysDlg button[type=submit]"); await settle(page);
+    key = await T0(() => window.__catio.minted[0]);
+    expect(key && key.length === 64, "no key minted: " + key);
+    expect((await page.locator("#keyValue").inputValue()) === key, "the field isn't the key");
+    expect((await page.locator("#keyUrl").inputValue()) === (await T0(() => location.origin)), "the address isn't the café's");
+    const t = await page.locator("#keysDlg").innerText();
+    expect(t.includes("CATIO_URL") && t.includes("CATIO_TOKEN") && /shown this once/.test(t), t);
+    expect(await page.locator("#keyValue").evaluate((i) => i.readOnly) && await page.locator("#keyUrl").evaluate((i) => i.readOnly), "a setting can be edited");
+    expect(await page.locator('#keysDlg button[aria-label="Copy CATIO_TOKEN"]').count() === 1, "no Copy beside the key");
+    expect(await page.locator('#keyList li[data-key="laptop"]').count() === 1, "laptop isn't listed");
+    expect(!(await toast(page)).includes(key), "the key is in a note");
+  });
+  await check("the key goes with the card, and is nowhere in the database, the browser's storage or a tool call", async () => {
+    await page.click("#keysDlg .actions .btn:has-text('Close')"); await settle(page);
+    const found = await T0((k) => {
+      const where = [];
+      if (document.documentElement.outerHTML.includes(k)) where.push("the page");
+      if ([...document.querySelectorAll("input, textarea")].some((i) => i.value.includes(k))) where.push("a field");
+      if (JSON.stringify(window.__catio.store).includes(k) || JSON.stringify(window.__catio.writes).includes(k)) where.push("the database");
+      if (JSON.stringify(window.__catio.tools).includes(k)) where.push("a tool call");
+      for (const s of [localStorage, sessionStorage]) for (let i = 0; i < s.length; i++) if ((s.key(i) + s.getItem(s.key(i))).includes(k)) where.push("storage");
+      return where;
+    }, key);
+    expect(!found.length, "the key is still in " + found.join(", "));
+    await keysOpen();
+    expect(await page.locator("#keyValue").count() === 0 && await page.locator('#keyList li[data-key="laptop"]').count() === 1, "opened again, the key shows, or laptop is gone");
+  });
+  await check("Delete asks first, then the key is gone", async () => {
+    const del = page.locator('#keyList li[data-key="laptop"] button');
+    await del.click(); await settle(page);
+    expect((await del.innerText()).trim() === "Yes, delete it", await del.innerText());
+    expect(await T0(() => window.__catio.keys.some((k) => k.name === "laptop")), "deleted without asking");
+    await del.click(); await settle(page);
+    expect(!(await T0(() => window.__catio.keys.some((k) => k.name === "laptop"))), "still kept");
+    expect(await page.locator('#keyList li[data-key="laptop"]').count() === 0, "still listed");
+  });
+  await check("a name already taken shows the gateway's own refusal, and no key", async () => {
+    await page.fill("#keyName", "bootstrap");
+    await page.click("#keysDlg button[type=submit]"); await settle(page);
+    expect((await toast(page)).includes("You already have a key by that name: drop it first."), await toast(page));
+    expect(await page.locator("#keyValue").count() === 0, "a key shown");
+    expect(await T0(() => window.__catio.minted.length) === 1, "minted anyway");
+  });
+  await check("no page errors with the keys", async () => expect(errors.length === 0, errors.join("; ")));
+  await ctx.close();
+}
+for (const [q, why] of [["", "in claude.ai"], ["?gateway=1", "in claude.ai with the gateway's connector"], ["?via=gateway&keys=none", "on an older gateway runtime"]]) {
+  const { page, ctx } = await open(q);
+  await openHouse(page);
+  await check("there is no Keys " + why, async () => {
+    expect((await menuText(page)).includes("Edit rooms"), "no House menu: " + await menuText(page));
+    expect(await menuButton(page, "Keys").count() === 0, await menuText(page));
+  });
+  await ctx.close();
+}
+{
+  const { page, ctx, errors } = await open("?mode=blocked");
+  const nextStep = async () => { await page.click("#setupDlg button[type=submit]"); await settle(page); };
+  await page.click("#houseBtn");
+  await menuButton(page, "Set up again…").click();
+  await wizard(page);
+  await nextStep(); await nextStep(); await nextStep();
+  await check("with the live read blocked, the Sessions step says to ask Claude for a saved copy, and shows the one there is", async () => {
+    const t = await page.locator("#setupDlg").innerText();
+    expect(t.includes("save a copy of your sessions") && t.includes("Claude's saved copy"), t);
+  });
+  await check("no page errors in the blocked wizard", async () => expect(errors.length === 0, errors.join("; ")));
+  await ctx.close();
+}
 
 // Her words (3 October 2026): "Allow all assets to be plug-n-plays". Every piece of art is a slot: the page names the
 // slot, never the file, so a piece of her own (or another pack's) drops in where the pack's was, with no code change,
@@ -2875,6 +3108,29 @@ await check("tools/skin.py: a map piece is pixel art only drawn near the art pix
     expect(/isn't JSON/.test(await toast(page)), await toast(page));
     await page.click("#lookMode-light"); await settle(page);
     await page.locator("#artDlg > .dlg > .actions .btn", { hasText: "Close" }).click(); await settle(page);
+  });
+  await check("the shared Figma file comes out the same in The look and in skin.py as in the gateway and catio_mcp.py", async () => {
+    // harness/test/fixtures: the one file all four read, and what each must find in it
+    const FIX = join(here, "..", "..", "harness", "test", "fixtures");
+    const want = JSON.parse(readFileSync(join(FIX, "tokens-figma.expected.json"), "utf8")), sorted = (o) => JSON.stringify(Object.fromEntries(Object.entries(o).sort()));
+    const kept = await page.evaluate(() => { const t = window.__catio.store["skin/theme"]; delete window.__catio.store["skin/theme"]; window.__catio.put("skin/zz", {}); delete window.__catio.store["skin/zz"]; return t; });
+    await page.waitForTimeout(500);
+    try {
+      await closeMenu(page); await page.click("#houseBtn"); await page.locator("#menu .mi", { hasText: "The look" }).click(); await settle(page);
+      await page.locator("#tokensFile").setInputFiles(join(FIX, "tokens-figma.json"));
+      await page.waitForFunction(() => /tokens-figma/.test(document.getElementById("toast").textContent));
+      const said = await toast(page), t = await page.evaluate(() => window.__catio.store["skin/theme"].tokens);
+      expect(sorted(t) === sorted(want.found), JSON.stringify(t));
+      expect(new RegExp(Object.keys(want.found).length + " tokens from tokens-figma\\.json.*" + want.foreign + " not the café's.*" + want.refused + " the café's with a value it can't take").test(said), said);
+      const { execFileSync } = await import("node:child_process");
+      const py = JSON.parse(execFileSync("python3", ["-c", "import json, sys; sys.path.insert(0, sys.argv[1]); import skin; f, n, r = skin.from_dtcg(json.load(open(sys.argv[2])), skin.token_names()); print(json.dumps([f, n, r]))",
+        join(here, "..", "tools"), join(FIX, "tokens-figma.json")], { encoding: "utf8" }));
+      expect(sorted(py[0]) === sorted(want.found) && py[1] === want.foreign && py[2] === want.refused, JSON.stringify(py));
+    } finally {
+      await page.evaluate(() => { const d = document.getElementById("artDlg"); if (d && d.open) d.close(); });
+      await page.evaluate((t) => { if (t) window.__catio.put("skin/theme", t); else window.__catio.drop("skin/theme"); }, kept);
+      await page.waitForTimeout(500);
+    }
   });
   await check("Import tokens… takes the café's own group over a namesake, and refuses a see-through colour or a size out of range rather than call it foreign", async () => {
     const kept = await page.evaluate(() => { const t = window.__catio.store["skin/theme"]; delete window.__catio.store["skin/theme"]; window.__catio.put("skin/zz", {}); delete window.__catio.store["skin/zz"]; return t; });
@@ -3062,16 +3318,17 @@ await check("tools/skin.py: a map piece is pixel art only drawn near the art pix
   });
   await check("an address that climbs out of art/ in disguise is refused, and a cat whose frames aren't square is asked for them", async () => {
     await page.evaluate(() => { window.__catio.put("skin/panel", { src: "art/%2e%2e/%2e%2e/files/x", at: 1 }); window.__catio.put("skin/cat-meow", { src: "art/licensed/ui/logo.png", at: 1 }); });
-    await page.waitForTimeout(700);
     try {
       await closeMenu(page); await page.click("#houseBtn"); await page.locator("#menu .mi", { hasText: "The look" }).click(); await settle(page);
+      // The look redraws as the skin lands: wait for both verdicts rather than for a guess at how long they take
+      await page.waitForFunction(() => ["panel", "cat-meow"].every((k) => /Yours isn't used/.test((document.querySelector("#artDlg li[data-slot='" + k + "']") || {}).textContent || "")), null, { timeout: 5000 });
       // refused as an address, never even fetched: not "couldn't be read", which is what a fetched one that failed says
       const panel = await page.locator("#artDlg li[data-slot='panel']").textContent();
       expect(/isn't a file the café can read/.test(panel), panel);
       const row = await page.locator("#artDlg li[data-slot='cat-meow']").textContent();
       expect(/frames aren't square/.test(row), row);
     } finally {
-      await page.evaluate(() => { const d = document.getElementById("artDlg"); if (d.open) d.close(); window.__catio.drop("skin/panel"); window.__catio.drop("skin/cat-meow"); });
+      await page.evaluate(() => { const d = document.getElementById("artDlg"); if (d && d.open) d.close(); window.__catio.drop("skin/panel"); window.__catio.drop("skin/cat-meow"); });
       await page.waitForTimeout(500);
     }
   });
