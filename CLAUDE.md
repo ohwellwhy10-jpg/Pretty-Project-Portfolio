@@ -4,7 +4,7 @@
 
 ## Republishing
 
-The page is **one** private artifact. Its URL is in `artifacts.json`. Always republish to that
+The page is **one** private artifact. Its URL is the `kittychat-cafe` entry in `artifacts.json`. Always republish to that
 URL (`Artifact` publish with `url`, after reading it back), never a new one: the database with
 her rooms, renames and adopted chats belongs to that artifact.
 
@@ -27,11 +27,17 @@ Publish `catio/index.html` with:
 
 `art/licensed/` is not in git (licences below). In a fresh session, get it back one of two ways:
 
-1. `Artifact` read with `path: "art/licensed/<file>"` on the published URL, for each file; or
-2. get the ten zips from her Drive folder "KittyChat Cafe Assets" (or ask her for them) and run
-   `python3 catio/tools/build-art.py CosyCabin.zip CatMegaFree.zip "Top down garden castle.zip" "Wood Garden Asset Pack.zip" "Pixel Art Top Down - Basic v1.2.3.zip" "Sprout Lands - UI Pack - Basic pack.zip" plants.zip "Sprout Lands - Sprites - Basic pack.zip" "Little Dreamyland - Free Pack.zip" Game_UI_Pack_Pastel.zip`
-   (needs `pip install pillow fonttools`; the order matters, not the names). Given only the Sprout Lands zip, it rebuilds just the
-   interface.
+1. `Artifact` on the published URL, with `out_dir: "catio"`: list its files (`action: "list"`,
+   `scope: "files"`), then one read whose `paths` hold every path **under `art/licensed/`** -- the nested
+   `ui/` and `pastel/` ones are most of them -- **and no others**. `out_dir` writes straight into the
+   checkout, and everything else in that listing is committed work here (`index.html`, `art/furniture.png`,
+   and her `art/skin.json` and `art/skin/*` once she has drawn any), which the published copy would
+   overwrite. `path` fetches a single file. Or
+2. get the ten zips from her Drive folder "KittyChat Cafe Assets" (or ask her for them), put them in one
+   folder and run `python3 catio/tools/build-art.py <that folder>` (needs `pip install pillow fonttools`).
+   Neither their names nor their order matters: each zip is recognised by a file only that pack has
+   (`SIGNATURE` in `build-art.py`), and it prints what it took for what before it draws anything — read
+   those lines once. Given only the Sprout Lands zip, it rebuilds just the interface.
 
 ## Licences: what may be committed
 
@@ -118,16 +124,23 @@ the upper one: `S.floor`, `data-floor` on everything, upper pieces lifted by `ZU
 - **Controls**: two things sit on screen, and nothing else should:
   - the brand (`#houseBtn`, top left: ToffeeCraft's cat-face bubble, the name and a badge when cats need
     her), which is the House button: its menu holds what belongs to the whole house (whether the cats are
-    live, the brain, house rules, Project maps, Edit rooms, the attic, Check now and sound). **Project maps**
+    live, the brain, house rules, Project maps, Edit rooms, the attic, Check now and sound; and, on the café's own
+    address alone, **Keys**, `openKeys()`: the account's keys by name, each with a Delete that asks first, and Make a key,
+    which shows the new key once beside `CATIO_URL` and `CATIO_TOKEN` and drops it from the page when the card closes;
+    never log it or write it anywhere, the database and `localStorage` included). **Project maps**
     (`openMaps()`, her ask of 3 October: "a customizable dashboard built on Graphify", the graphify of her house
     rules) shows every `graphs/<repo>` map as a card, pinned first, then in her order, then the newest; she pins,
     moves, widens and hides each, and `dashboard/maps` keeps it;
   - the map panel (`#controls`, top right; bottom right on a phone), in Game UI Pastel, drawn smooth:
     zoom out, zoom in, whole house and the fold (`#mapFold`, or M, remembered in `localStorage` as
-    `catio.minimap`, folded at first on a phone); the minimap (`#minimap`: the floor's rooms as a plan
+    `catio.minimap`, folded at first on a phone). Folding minimises the whole panel, not just the plan (her ask, 5
+    October: "allow the mini-map to be minimizable"): the fold button alone stays, in the panel's corner, drawn as a
+    folded map, with a pip for every cat that needs her out of view (off screen, or on the other floor); open, it is
+    an arrow into that corner, never an up or down arrow beside the floor tabs. On a phone the buttons sit at the
+    panel's foot, so the fold keeps the bottom right corner. Then the minimap (`#minimap`: the floor's rooms as a plan
     over `MM.box`, the manor and catio, the other floor faint, a pip where a cat needs her, the camera's
     view framed; click goes there, drag pans, double-click looks in, the wheel zooms); and the floor
-    tabs, with a pip when the other floor needs her. Menus open clear of it (`showMenu`). The plan for
+    tabs, with a pip when the other floor needs her. Menus open clear of it (`showMenu`), by whichever of left, below or above moves them least. The plan for
     the rest (the Sims-style camera and Build) is `docs/camera-and-minimap.md`.
 - **The status sign** under the brand shows only when something is wrong. When Claude's saved copy fills
   in for a blocked live read, it is one line ("Saved copy · 17:02") and the why shows on hover or focus.
@@ -221,7 +234,7 @@ with `tok()`. Keep it that way: **a new colour, pixel-font size or art-pixel siz
 rule or a `"#…"` in the script (only `OWNER`'s choices, which are her look, not the café's). A check walks the page for
 one. The text's smaller sizes stay `rem` steps from the browser's own size, as they always were.
 
-**Every piece of art is a slot** (`ART` in the page, 45 of them, named as `docs/drawing-plan.md` names her files:
+**Every piece of art is a slot** (`ART` in the page, 46 of them, named as `docs/drawing-plan.md` names her files:
 `panel`, `button`, `cat-meow`, `house`, `owner`, `font`, `font-body`…).
 The CSS and the code name the slot, never the file: a 9-slice is `var(--art-panel) var(--panel-s) fill /
 var(--panel-w)`, a sheet `var(--art-faces)`, the house `<img data-art="house">`, the furniture
@@ -268,7 +281,8 @@ Format 2025.10). Figma keeps a variable's value per **mode** and moves a whole p
   one written by hand. A token is matched by its own name (`ink`, `go`, `px-size`…, or Figma's `Ink`, `Px size`) whatever group it sits in, an
   alias (`"{primitives.navy}"`) is followed, a colour may be the object or a hex string, and what isn't the café's is
   counted and left out. A name found twice takes the one in the café's own group (`colours.grass` over
-  `primitives.grass`); a see-through colour or a size out of its range is refused and counted apart. `skin.py` does the same for `*.tokens.json` dropped in `art/skin/` ("dark" in the name: the
+  `primitives.grass`); a see-through colour or a size out of its range is refused and counted apart. The harness's
+  `tokens` and `set_tokens` tools do both without her (below, "The gateway"). `skin.py` does the same for `*.tokens.json` dropped in `art/skin/` ("dark" in the name: the
   dark mode).
 
 Not taken from Figma, on purpose: a primitives layer under the semantic tokens (Figma's skill keeps one collection
@@ -465,20 +479,32 @@ its Stop hook hands in what she sent. Workers Builds deploys it on every merge t
 
 - **Three secrets, set only in Cloudflare:** `CATIO_TOKEN` (agents and hooks; also in her Claude environments),
   `CATIO_PASSWORD` (her sign-in, nowhere else) and `CATIO_QUEEN` (the queen's runner, on her PC). Never in the
-  repo, the chat or a test. With accounts (`src/registry.js`), the first two make the first account once; the
-  queen's is a registry key with the role `queen`, kept in step with the secret at every start.
-- **Only she speaks as herself, and only her runner as the queen.** OAuth (her password, through the `Catio`
+  repo, the chat or a test. With accounts (`src/registry.js`), the first two make the first account once (a
+  `CATIO_PASSWORD` changed later becomes its password at the next deploy; its handle is `CATIO_HANDLE`, else
+  `charlotte`); the queen's is a registry key with the role `queen`, kept in step with the secret at every start.
+- **Only she speaks as herself, and only her runner as the queen.** OAuth (her password, through the `CATIO`
   connector in claude.ai) may write as `owner`, drop files and manage; the queen's key writes as `queen`,
   tells cats and manages them for her; the agents' key may do neither. Keep it that way: it is what stops a
   leaked key from putting instructions in her mouth, or in her assistant's, which the cats act on.
 - **The queen's routes:** `POST /api/runner/wait` (held up to 25 s: her notes, a routine due, a stop, her
-  character) and `POST /api/runner/say` (a turn as it streams; `done` stores her note), the queen's key only.
+  character, and `homework`, the open quizzes counted by kind; its body's `ack` is the newest note the runner has
+  been given, and a note is offered until it is acknowledged, so one lost with a dropped connection comes round
+  again) and `POST /api/runner/say` (a turn as it streams; `done` stores her note), the queen's key only. When a
+  kind of homework grows, the runner says the lot on Charlotte's own desktop with whatever the computer has
+  (`notify-send`, `osascript`, a PowerShell balloon; `CATIO_NOTIFY` replaces it, empty turns it off): the quest log
+  stays in the café, this only says it has something new. The words are the runner's own, built from counts, never
+  a document's text.
   Routines are `routines/<id>` documents; the House's alarm wakes a waiting runner when one comes due, and a
   missed one runs once when the runner is back, and one her runner never finished goes out once more after ten minutes. `list_agents` gives each cat its `said`; `inbox` hands a cat
   what Charlotte and the queen say (`[Catio] The queen says: …` in the hook).
 - **Only Claude's connectors may register** (redirects to `claude.ai` or `claude.com`).
 - **Keep its tools in step with `catio_mcp.py`**: same names, arguments and results, so the page and agents
   use either.
+- **Her look as a design tokens file** (`tokens`, `set_tokens`, `src/tokens.js`; `harness/README.md`, "The café's
+  look as a design tokens file"): The look's Export and Import tokens as tools, for a session with the Figma
+  connector. Only she and the queen write it. The token table is read from the page the gateway bundles, never
+  copied; `harness/test/fixtures/tokens-figma.json` holds the page, `skin.py`, the gateway and `catio_mcp.py` to one
+  answer.
 - **The decider** (`src/decide.js`, the tool `decide`): a typed decision from a System One model, a state and named
   questions (`noul` yes/no, `choice`, `score`) answered with probabilities, no prose. Workers AI through the Worker's
   `AI` binding, Clef (`@cf/cloudflare/clef-flash`, free plan) by default or `DECIDE_MODEL` (`typesafe/jev` is Jev
@@ -575,7 +601,17 @@ never been configured.
 ## Checking a change
 
 Look first, test second. A test rewritten to match the code only proves the two agree; looking is what
-proves the page does what she asked. In this order:
+proves the page does what she asked.
+
+**Before either, get `art/licensed/`.** It is gitignored, so a fresh clone and every cloud session start
+without it, and without it both steps are blind: the screenshots show the no-art fallbacks rather than the
+page, and the checks that stand in for her own art fail. What the missing art explains is exactly this, and
+nothing else: **the check that wants no warning sign, and the checks of The look and a skin** -- her own
+pieces, slots, frames and fonts. **A failure outside those is real, and once the art is here every failure
+is.** Go by the check, not by what it printed: most of them fail with a computed value or a timeout and
+never mention `art/licensed`. Don't carry a count either, in a file or in your head: every count written
+here has gone stale within the day. Route 1 under "Republishing" is a listing and one read. Then, in this
+order:
 
 1. **Change it.** Art too: re-run `build-art.py` (or `furniture.py`).
 2. **Look at it before touching a test.** `sh catio/test/run.sh look kitchen study` (`ground`, `upper` or any
@@ -583,12 +619,12 @@ proves the page does what she asked. In this order:
    stub's invented cats. Open each and hold it against her words, one ask at a time ("no z Z": find a
    sleeping cat). A sprite sheet isn't in the DOM and no test can see it: open the sheet too. Not what she
    asked for? Back to 1.
-3. **Run the test unchanged:** `sh catio/test/run.sh` (about two minutes). Every failure should be something
+3. **Run the test unchanged:** `sh catio/test/run.sh` (about seven minutes). Every failure should be something
    she asked to change. One she didn't is a regression: fix the page, not the test.
-   **The suite needs `art/licensed/`.** It is gitignored, so a fresh clone or cloud session hasn't got it,
-   and without it the page correctly draws its no-art warning on the status sign: the check that wants no
-   warning sign then fails, and that is the missing art, not the page. `run.sh` says so when it starts.
-   Get the art back the two ways under "Republishing" before trusting a red run.
+   **A run without `art/licensed/` is not a verdict** (above). `run.sh` says so when it starts, and names
+   which checks go red for want of the art rather than a count that goes stale. **A run that ends in
+   `CRASH` stopped early**, so its list is partial and a short one reads as nearly green when most of the
+   suite never ran: the totals line is the only proof it reached the end.
 4. **Rewrite only those checks, from her words:** what must be true now, not which class names went away
    (`#cats .cat > :not(.spr)`, not a list of deleted classes). Then the whole suite: all checks must pass.
 

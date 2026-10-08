@@ -25,7 +25,8 @@ needs you, and one friendly queen cat helps you run the place. You never need to
 
 How it connects, start to finish:
 
-1. You work with Claude as usual. Each chat becomes a cat, and its project decides its room.
+1. You work with Claude as usual. Each Claude Code session becomes a cat on its own, and its project decides its room.
+   An ordinary claude.ai chat, which no connector can read, you add as a cat by hand from a room's menu.
 2. Each cat checks in at a small always-on online front desk (the gateway) with a short note: working, finished, or
    stuck and needs you.
 3. The café page shows what the front desk knows. Busy cats look busy, sleeping cats sleep, and a badge counts the
@@ -55,38 +56,214 @@ A hosted café with nothing to install is planned and not open yet. Separately, 
 Café app in December 2027. The pixel art comes from third-party packs that cannot be shared, so check each pack's terms before
 posting screenshots.
 
+**Invited to someone's café?** An invite is a café of your own on someone else's front desk, so most of
+[Running your own](#running-your-own) is done for you. Open the invite link, pick a handle and a password, and keep the
+key it shows you in your password manager: it is your cats' key, yours alone. Then do step 1 (Claude Code) and step 5
+(the house rules, which also make your sessions check in), with `CATIO_URL` set to the café's address (your invite
+link up to `/signup`) and `CATIO_TOKEN` set to your key. Skip steps 3 and 4: your café is at that address, behind your
+handle and password. It draws no house or cats: the art packs' licences are personal, so only the café owner's own café is given them. Ninine's runner (step 6) needs a queen's key of your own:
+[`harness/gateway/README.md`](harness/gateway/README.md#the-queen-and-her-runner) says how to make one.
+
 Everything below is the detail.
 
 ## Running your own
 
-`catio-plugin/` is a Claude Code plugin. Point Claude Code at it and ask it to set up your café:
+You can run your own café today, from this repository, for free. It needs a terminal today (steps 1, 3, 4, 5 and 6):
+if you only use claude.ai, the hosted café is the one for you, and it isn't open yet. The engine (Claude's models in Charlotte's case) is yours already; this section
+fits the rest of the car around it, one part at a time, in the order to take them. Each step says what
+to click or type and how you know it worked. The parts after the windshield are optional: stop after step 3 and you
+have a café with your rooms and a saved copy of your sessions; add the desk, the seatbelts and the driver when you
+want live cats, house rules and Ninine.
+
+The current cafe framework uses Claude Code to run the queen; other models (Grokbot, Codex, etc.) will be made available very soon. 
+
+**Before you start, you need:**
+
+- a **Claude** account on a plan that includes Claude Code (Pro or Max), signed in at claude.ai;
+- a **GitHub** account, with your projects in repositories (the café files each project by its repository);
+- **Git** (git-scm.com; on Windows, Git for Windows, which Claude Code needs there too), for step 3's `git clone`;
+- a computer with **Python 3** (python.org, or the Microsoft Store on Windows) and **Node.js** (nodejs.org), for
+  the plugin and the driver. On Windows, type `python` wherever this README says `python3` (the plugin's own hooks pick `py` or `python` there by themselves);
+- for the front desk, a free **Cloudflare** account (cloudflare.com);
+- the **cat art**: the packs are not in this repository and cannot be (their licences forbid sharing). Most have a
+  free tier; the list is in [`catio/art/CREDITS.md`](catio/art/CREDITS.md). Without them the café draws no house
+  and no cats and says so on its sign. Today the house and the cats need all ten packs at once, and one of them,
+  `plants.zip`, has no public source yet, so a full build is Charlotte's alone for now. The interface alone builds
+  from the Sprout Lands UI pack, and the café works without the rest, on plain panels.
+
+### Step 1: the engine. Claude Code, on your computer
+
+Open a terminal (Terminal on a Mac, PowerShell on Windows) and run:
 
 ```bash
-git clone https://github.com/charredlatte/Pretty-Project-Portfolio
-claude --plugin-dir Pretty-Project-Portfolio/catio-plugin
+npm install -g @anthropic-ai/claude-code
+claude
 ```
 
-The skill walks you through your rooms, your sessions, publishing the page as your own private claude.ai artifact,
-and a folder that runs on your own computer. The page does the same on its own: a café with no rooms yet opens a
-seven-step wizard (name it, open the rooms you need, file your repositories, see your sessions, the litter box, how
-it works), and "Set up again…" in the House menu replays it.
+Type `/login` if it asks and sign in with your Claude account. **It worked when** `claude` opens a prompt that
+answers you.
 
-**What a fork changes.** The house rules (`harness/`, the `kittychat-house-rules` plugin) are what make your sessions
-report to the gateway, collect what you send them and follow the rules below. Today the harness and the page are set
-for Charlotte's own café: her café's link, her GitHub name, her public repositories and her install lines are
-written into them. [`docs/self-hosting.md`](docs/self-hosting.md) lists what to change in your fork before you
-publish your café or install the plugin from it (the install lines are in [`harness/README.md`](harness/README.md):
-give them your fork's address).
+### Step 2: the tires. GitHub, connected to Claude
 
-For cats that stay live wherever you open the café, and a queen you can talk to, add the gateway: a free Cloudflare
-Worker that every session checks in at, set up in five steps ([`harness/gateway/README.md`](harness/gateway/README.md)).
-The queen's brain runs on your own computer ([`harness/runner/README.md`](harness/runner/README.md)).
+On claude.ai, open Settings, then Connectors (or the Code tab), and connect your GitHub account, giving it the
+repositories you want as rooms. **It worked when** Claude Code on claude.ai lists your repositories to start a
+session in.
 
-**Bring your own cats.** Seven of the ten art packs the café is drawn from forbid sharing their files, an eighth is
-drawn into the same pictures as theirs, and plants.zip came with no licence, so `catio/art/licensed/` is not in
-this repository. A fresh clone draws only the Cosy Cabin furniture, its menus on plain colour: no house and no
-cats. It says so on its own sign, with the three steps to fix it: buy the packs yourself and run
-`catio/tools/build-art.py` over your own zips. Only Cosy Cabin, whose licence allows it, is included.
+### Step 3: the windshield. The café page, with your cats in view
+
+On GitHub, open <https://github.com/charredlatte/Pretty-Project-Portfolio> and press **Fork**: your fork is your own
+copy, the one the later steps change, push to and import. Then get your fork and let Claude set the café up with you:
+
+```bash
+git clone https://github.com/<your GitHub name>/Pretty-Project-Portfolio
+cd Pretty-Project-Portfolio
+claude --plugin-dir catio-plugin
+```
+
+Then say: *set up my café*. The skill walks you through your rooms, your repositories and publishing the page as
+your own private claude.ai artifact, and tells you where to put the art packs' zips
+(`python3 catio/tools/build-art.py <the folder you put them in>` draws the house and the cats from them,
+naming each zip by what is inside it). The page does the same on
+its own: a café with no rooms yet opens a seven-step wizard. **It worked when** you open your café's link and it
+opens on your rooms. If the sign under the brand says *"The cat art isn't here"*, step back to the art. If it says
+claude.ai doesn't let pages read your sessions live, that isn't yours to fix: the cats come from a copy of your
+sessions that Claude saves to the café when you ask (*save my sessions for the café*), and step 4 brings them live.
+
+If you would rather not use claude.ai at all, `python3 catio/tools/bundle.py` makes a folder that runs from any
+static server on your own computer ([On your own computer](#on-your-own-computer)).
+
+**What is still Charlotte's.** The page and the harness were built for one café first, and a few of her values
+are written into them: her café's link, her GitHub name, her install lines. [`docs/self-hosting.md`](docs/self-hosting.md)
+lists each one and what to set it to in your fork. The page carries them, and the house rules of step 5 read them.
+One of them is your café's own link, which only exists once you have published: publish once, set the values on
+your fork (that link included), then ask Claude to republish to the same link.
+
+**Make it yours without touching the code.** Your café's name is the wizard's first step; rooms are *Edit rooms*;
+colours, fonts and art are *The look*, or your own drawings beside the page in `catio/art/skin/`. All three are in
+the House menu. Keep that on your fork: [`CONTRIBUTING.md`](CONTRIBUTING.md) says what stays there and what comes back
+here. Press **Sync fork** on GitHub now and then, and always before reporting a problem: fixes land here first.
+
+### Step 4: the dashboard. The front desk on Cloudflare
+
+The gateway is a small program that runs on Cloudflare's free plan and never sleeps. Every cat checks in at it, so
+the café shows live cats without asking claude.ai, and it is what Ninine answers through. The five steps, with
+screenshots' worth of detail, are in [`harness/gateway/README.md`](harness/gateway/README.md). In short:
+
+1. On Cloudflare, Workers & Pages → Create → Import a repository → your fork (the copy from step 3). Name the Worker
+   `catio-gateway`, set the root directory to `harness/gateway`, the branch to `main`, and deploy. Its address
+   looks like `https://catio-gateway.<your name>.workers.dev`, where `<your name>` is your Cloudflare account's
+   workers.dev subdomain. Another name works too, if `name` in `harness/gateway/wrangler.jsonc` on your fork says
+   the same: Workers Builds refuses a build when the two differ. A new name makes a new Worker, with a new address
+   and none of your secrets: add them all to it before you open its address.
+2. On the Worker, Settings → Variables and Secrets (not Settings → Build, whose variables never reach the running
+   Worker), add your handle and three **secrets** in one go, then deploy
+   again. The handle is `CATIO_HANDLE`, the name you will sign in with, 2 to 31 lower-case letters, digits or
+   dashes; add it as a **Secret** too, not a Text variable, because each deploy from GitHub wipes the Text ones
+   and keeps the secrets. The secrets are `CATIO_TOKEN` (a long random string: the key your cats
+   check in with), `CATIO_PASSWORD` (your own sign-in, 16 characters or more) and `CATIO_QUEEN` (another long
+   random string: the driver's key). Keep the three secrets in your password manager, and give them out only as the steps below say: the cats' key
+   to your sessions (step 5), the driver's key to your own computer (step 6), the password to nobody. **Add the
+   handle with the password, not after:** the very first request that reaches the Worker with `CATIO_PASSWORD`
+   set makes the first account, even just opening its address in a browser, and names it `CATIO_HANDLE` or, if
+   that isn't there yet, `charlotte`, for good.
+3. On claude.ai, Customize → Connectors → Add → Custom → Web. Name it `CATIO`, URL `<the address>/mcp`, sign in
+   with your handle and `CATIO_PASSWORD` (five wrong tries lock the handle for a quarter of an hour), then open
+   the connector and set its tools to **Always allow**.
+4. Ask Claude, in the session from step 3, to republish your café with the whole set of capabilities in `CLAUDE.md`
+   ("The stored capabilities"), the `CATIO` server included. The page you published in step 3 can't reach the front
+   desk until then.
+5. The Worker's own address is a second café, with its own rooms and looks, kept apart from the claude.ai one: the
+   wizard opens there once more, and it draws no house and no cats until you upload the art to it from your clone
+   (and again after you rebuild the art). On a Mac or Linux:
+
+   ```bash
+   CATIO_URL="https://catio-gateway.<your name>.workers.dev" CATIO_TOKEN="<the first secret>" python3 harness/gateway/cafe/move-in.py
+   ```
+
+   On Windows, in PowerShell, in the folder you cloned:
+
+   ```powershell
+   $env:CATIO_URL = "https://catio-gateway.<your name>.workers.dev"
+   $env:CATIO_TOKEN = "<the first secret>"
+   python harness\gateway\cafe\move-in.py
+   ```
+
+**It worked when** opening the Worker's address in a browser asks for your handle and password, and your claude.ai
+café's House menu says *Gateway live* with a time. If the Worker's address shows warning lights instead, the account
+isn't made yet: each light says which secret this Worker can't see, or what's wrong with it. Fix the crosses and
+reload.
+
+### Step 5: the seatbelts and brakes. The house rules, in every session
+
+The house rules are a Claude Code plugin. They make every session check in at the desk, collect what you sent, open
+with a read-only audit, never push to your main branch, and hold anything guessed for you to review. Install it
+once (use your fork's address if you changed what step 3 lists):
+
+```bash
+claude plugin marketplace add https://github.com/charredlatte/Pretty-Project-Portfolio.git
+claude plugin install kittychat-house-rules@kittychat --scope user
+```
+
+To update it later: `claude plugin update kittychat-house-rules@kittychat`. Two of the rules call skills that aren't
+in this repository: the read-only audit calls `ponytail-audit` (from [ponytail](https://github.com/DietrichGebert/ponytail))
+and the check before any browser calls `browser-agent-preflight`. Install them, or switch their rules off in a
+repository's own `.claude/catio-rules.json`, such as `{"opening_audit": false, "preflight": false}`. The rules also
+make every helper agent Claude starts name its model, and tell a session on Fable to suggest Opus: those are rules,
+not a broken install ([`harness/README.md`](harness/README.md) lists them all).
+
+Then tell your sessions where the desk is, with two environment variables: `CATIO_URL` (your café's address: the
+Worker's if you run your own, or the address of the café you were invited to) and `CATIO_TOKEN` (your own key: the
+first secret if the gateway is yours, or the key your café gave you; never someone else's). On your computer, put
+them in `.claude/settings.json` in your home folder (`C:\Users\<you>\.claude\settings.json` on Windows; make the
+file if it isn't there) as `{ "env": { "CATIO_URL": "https://…", "CATIO_TOKEN": "…" } }`, or add the `"env"` part
+beside what is already in it; for sessions
+on claude.ai, open the environment menu in a session's title bar → Edit, add the same two variables, allow the
+Worker's address under Network access, and put the two install lines above in the setup script, since a cloud
+session starts fresh each time ([`harness/README.md`](harness/README.md#in-cloud-sessions)).
+
+**It worked when** `claude plugin list` shows `kittychat-house-rules`, a new session opens with its read-only audit,
+and its cat in the café turns busy as it works.
+
+### Step 6: the driver. Ninine's runner, on your computer
+
+Ninine thinks on your own computer, with your own Claude plan, so she costs nothing extra and runs only while your
+computer does. Give her the desk's address and her key, then start her from the repository's folder.
+
+On Windows, in PowerShell (`<your name>` is your workers.dev subdomain, as in step 4):
+
+```powershell
+setx CATIO_URL "https://catio-gateway.<your name>.workers.dev"
+setx CATIO_QUEEN "<the third secret>"
+```
+
+`setx` keeps the two for every new window but doesn't change the one it ran in, so close this window, open a new
+PowerShell, and start her from the folder you cloned in step 3:
+
+```powershell
+cd <the folder you cloned in step 3>
+python harness\runner\queen.py
+```
+
+On a Mac or Linux, in the same terminal window (`export` lasts only for that window; put the two lines in
+`~/.zshrc` or `~/.bashrc` to keep them):
+
+```bash
+export CATIO_URL="https://catio-gateway.<your name>.workers.dev"
+export CATIO_QUEEN="<the third secret>"
+python3 harness/runner/queen.py
+```
+
+**It worked when** the window says *the queen's runner is up* and, in the café on the Worker's address, pointing at
+Ninine says she is here. Keep the window open; close it and she falls asleep in the café. [`harness/runner/README.md`](harness/runner/README.md)
+has the details and how to start her with the computer.
+
+### Step 7: the keys. Open the doors
+
+Open your café on the Worker's address, the one where Ninine talks as she thinks, say hello to her, drop a file on a
+cat and watch it pick it up at its next turn. Your claude.ai café reaches her too once step 4 has republished it,
+but shows her answer only when it is whole. The sign under
+the brand shows only when something is wrong, and then says how to fix it. Other agents (Codex, Gemini CLI, Cursor)
+can join as cats too, through the Catio MCP server ([`harness/README.md`](harness/README.md#other-agents-and-models-the-catio-mcp-server)).
 
 ## What you get
 
@@ -114,8 +291,9 @@ cats. It says so on its own sign, with the three steps to fix it: buy the packs 
   read-only audit before any change, a check before any browser, and nothing pushed to your default branch. A
   repository can let its sessions merge their own pull requests; then anything guessed is held for you to review
   ([`harness/README.md`](harness/README.md)).
-- **Other agents too.** Codex, Gemini CLI, Cursor or anything else that speaks MCP joins as a cat through the Catio
-  MCP server.
+- **Other agents too.** Codex, Gemini CLI, Cursor, Antigravity or anything else that speaks MCP joins as a cat: through
+  the café's MCP address on a gateway (`catio_bridge.py` for a client that only starts local programs), or the Catio
+  MCP server on one computer ([`harness/README.md`](harness/README.md), "Which server, for which café").
 
 ### Getting around
 
@@ -194,40 +372,52 @@ small meow.
 
 ### How what you send reaches a session
 
-Files dropped on a cat, messages written to it, and pause or wrap-up requests are saved the moment you send them,
-and there are three roads from there, by who the message is for:
+In the car, this is **the intercom**. You speak from the driver's seat (the café page); a cat hears you where it
+sits. Everything you send, a line typed to a cat, a file dropped on it, a Pause or Wrap up, is **written down the
+moment you send it**, so nothing is lost if the cat is asleep. From there it takes one of three roads, by who it
+is for:
 
-- **To a session, without the gateway:** it waits in the café's database (`brain/`, `notes/`, `outbox/`), and the
-  session collects it at its next turn: the house-rules plugin's `catio` skill reads what is addressed to it, acts,
-  answers on the cat and marks it delivered.
-- **To a session, with the gateway:** the gateway's *house* (one SQLite-backed Durable Object per account, in the
-  Cloudflare Worker) keeps it in its inbox, and the plugin's `report.py` hook collects it at the end of the
-  session's current turn: one request that reports the cat's state and takes what is waiting, each item once, and
-  hands it to the session as its next turn (`[Catio] Charlotte says: …`). The reply comes back the same way and
-  shows in the cat's conversation at once.
-- **To the queen:** the house wakes her *runner*, `harness/runner/queen.py` on your own computer, which waits on the
-  gateway in a held request (so your PC needs no address), runs one restricted Claude Code turn per thing you say
-  or routine due, and streams her words back through the gateway to every open café as she speaks. The Worker is
-  her face, ears and memory; the runner is where she thinks. What she tells a cat reaches it by the road above.
+- **To a cat, with no front desk (no gateway).** The note is left on the cat's seat, in the café's own database.
+  Nobody can shake a sleeping cat awake, so it reads the note the next time it is up, at the start of its next
+  turn: the house rules make it look at its seat first, do what the note asks, answer on the cat and tick the
+  note as read.
+- **To a cat, with the front desk (the gateway).** The front desk, a small always-on program on Cloudflare, keeps
+  the note in that cat's pigeonhole. Each cat checks in at the desk every time it finishes a turn, and the desk
+  hands over whatever is in the pigeonhole, once: the cat's **next turn is your note**, so a cat that is working
+  gets your words as soon as it finishes what it is saying. Its reply goes back through the same desk and shows
+  up in its conversation on the page at once. A cat that was already asleep still waits for its next turn.
+- **To Ninine, the driver.** The queen is not a cat you hired; she is the one driving. When you talk to her, the
+  front desk rings **her runner**, a small program you keep running on your own computer. The runner is where she
+  thinks: it starts one locked-down Claude turn for each thing you say or each routine that comes due (she can use
+  the café's tools and nothing else: no commands, no files), and streams her answer back through the desk so the
+  page shows her talking as she goes. The front desk is her face, ears and memory; your computer is her brain.
+  What she tells another cat reaches it by the road above, like your own words would.
 
-Only claude.ai can wake a session that has stopped, and it doesn't let a page do it; why is in
-[`harness/README.md`](harness/README.md#why-the-café-cant-push-into-a-session). Each hop, process by process, and
-how the design holds up on scale, speed, extensibility, security, debugging and tests:
-[`docs/delivery.md`](docs/delivery.md).
+What no road can do: wake a cat that has stopped. Only claude.ai can start a session's next turn, and it doesn't
+let a web page do it; why is in [`harness/README.md`](harness/README.md#why-the-café-cant-push-into-a-session).
+Each hop, program by program, and how the design holds up on scale, speed, extensibility, security, debugging and
+tests: [`docs/delivery.md`](docs/delivery.md).
 
 ## On your own computer
 
 The café also runs from a folder, with no claude.ai at all. `python3 catio/tools/bundle.py` makes
 `catio/dist/catio-local/` (and a zip of it): the page as one HTML file, all the art, the rooms in
 `catio/data/rooms.json` (Charlotte's; a browser takes them once, then Edit rooms or Set up again… changes them), and
-`catio/data/sessions.json`, the last copy of your sessions Claude saved (`catio/tools/save-sessions.py`). Serve the
-folder with any static server, such as VS Code's Live Server or `python -m http.server 8000`, and open
-<http://localhost:8000>. The page is plain HTML and needs no server of its own.
+`catio/data/sessions.json`, the last copy of your sessions Claude saved (`catio/tools/save-sessions.py`). Go into the
+folder (`cd catio/dist/catio-local`) and serve it with any static server, such as VS Code's Live Server or
+`python3 -m http.server 8000` (`python -m http.server 8000` on Windows), and open <http://localhost:8000>.
+Double-clicking `index.html` won't work: it needs the server.
+
+The cats there come from that saved copy, and a fresh clone has none. Only a Claude Code session on claude.ai can make
+one (`claude` in your terminal can't read your list of sessions): ask it to save your sessions for the café and send
+you the file (it runs `list_sessions`, then `catio/tools/save-sessions.py`), put it in `catio/data/`, and run
+`bundle.py` again. Without it the café opens with no cats.
 
 The folder also carries the Catio MCP server, which serves the page and lets agents that aren't Claude Code
 sessions join as cats: from inside the folder, `python3 harness/mcp/catio_mcp.py --serve . --port 8791`, then open
 <http://localhost:8791>. On localhost the sessions' cats are the saved copy, not live (agents that join the MCP
-server are), and adopted chats, room names and project looks are kept in that browser.
+server are), and adopted chats, room names and project looks are kept in that browser. For newer cats, have a session
+save them again and copy the new file into the folder's `data/`.
 
 The folder holds your licensed art and your session titles, so it is for your own use: never commit it or share it.
 
@@ -327,8 +517,9 @@ has its own browser. Each run
 starts a fresh temporary profile with no logins or saved passwords, and as the page stands it loads only local files
 and the page's Google Fonts, plus, for the test (not the screenshots), its own server on 127.0.0.1 port 8791. Set
 `PORT` if something else, like `catio_mcp.py --serve`, holds that port: `run.sh` doesn't notice. Without the licensed art (see
-[Running your own](#running-your-own)), the check "on its own address the café is live through the gateway, with no
-warning sign" fails, as `run.sh` warns.
+[Running your own](#running-your-own)) the run is not a verdict: the check that wants no warning sign fails,
+and so do the checks of The look and a skin, which stand in for her own drawings. A failure outside those is
+a real one. `run.sh` says so when it starts, and again at the end if the run went red.
 Sessions under the house rules run the browser preflight first ([`harness/README.md`](harness/README.md)).
 
 ## Licence

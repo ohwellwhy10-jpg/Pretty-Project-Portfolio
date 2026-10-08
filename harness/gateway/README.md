@@ -10,7 +10,7 @@ keeps its cats, their conversations and the files waiting for them in one SQLite
 
 ```
  Claude Code sessions ── report.py hook ──┐
- Codex, Gemini, Cursor… ── MCP + key ─────┼──►  catio-gateway (Cloudflare)  ◄── claude.ai: the "Catio" connector,
+ Codex, Gemini, Cursor… ── MCP + key ─────┼──►  catio-gateway (Cloudflare)  ◄── claude.ai: the "CATIO" connector,
  her PC's sessions ── report.py hook ─────┘      /mcp, /authorize, /token        which the page reads as her
 ```
 
@@ -25,11 +25,12 @@ their own cats and café. Two kinds of caller, told apart by how they sign in:
   drops files and manages. So a key that leaks out of a session can't put words in her mouth to another one.
 
 The first account is `charlotte`'s, made from the two secrets below the first time the gateway runs with accounts;
-it is the admin, which uploads the café's art and creates the other accounts.
+it is the admin, which uploads the café's art, creates the other accounts and invites people to sign up.
 
 ## Setting it up (once)
 
-1. **Cloudflare.** Workers & Pages → Create → Import a repository → `charredlatte/Pretty-Project-Portfolio`.
+1. **Cloudflare.** Workers & Pages → Create → Import a repository → `charredlatte/Pretty-Project-Portfolio`
+   (on a gateway that isn't hers, your fork of it).
    - Name it `catio-gateway`. Cloudflare fills in the repo's name, `pretty-project-portfolio`: replace it, because
      the Worker's name must match `wrangler.jsonc` or later deploys fail. A Worker made under the wrong name is
      simplest deleted (Settings → Danger zone) and imported again; delete its leftover KV namespace too.
@@ -42,11 +43,19 @@ it is the admin, which uploads the café's art and creates the other accounts.
    *Production*, then Deploy:
    - `CATIO_TOKEN`: the agents' key, 32 random characters or more.
    - `CATIO_PASSWORD`: a different one, the password she signs in with (16 characters or more). It goes into her
-     password manager and nowhere else.
+     password manager and nowhere else. Changing it later makes the new one the first account's password at the
+     next deploy (her browsers sign in again; her keys stay).
    - `CATIO_QUEEN`: the queen's runner's own key (below), 32 random characters or more; also on the PC that runs
      her.
+   - `CATIO_HANDLE`, on a gateway that isn't hers: the handle you sign in with. Unset, the first account is
+     `charlotte`, whatever your own name is.
 
-   Never paste any of them into a chat.
+   Never paste any of them into a chat. `CATIO_PASSWORD` and `CATIO_HANDLE` make the first account once, on the first
+   request after the deploy: changing `CATIO_HANDLE` afterwards changes nothing, so sign in with the handle it was made
+   from. A `CATIO_PASSWORD` changed afterwards becomes the password at the next start (browsers sign in again; keys
+   stay), unless the gateway is older than that: then it is only noted, so change it once more. To
+   start again with no accounts, import the repository again as a new Worker and set `name` in `wrangler.jsonc` to
+   that Worker's name: Workers Builds refuses a build when the two differ.
 3. **Claude's environments.** In a cloud session, open the environment menu in the session's title bar → Edit. In
    each environment her sessions use:
    - add two environment variables, `CATIO_URL` = the address above and `CATIO_TOKEN` = the agents' key;
@@ -55,32 +64,49 @@ it is the admin, which uploads the café's art and creates the other accounts.
      reports is in it, and a cloud session doesn't install it by itself.
 
    On her PC, the same two variables go under `"env"` in `~/.claude/settings.json`, for local sessions.
-4. **claude.ai.** Customize → Connectors → Add → Custom → Web. Name it `Catio`, with the URL `<address>/mcp`. A
-   window opens on the gateway's sign-in page: type `CATIO_PASSWORD` and choose *Let it in*. Then open the
-   connector and set its tools to **Always allow**. That setting is the one Claude Code Remote, being built in,
-   doesn't have, and the reason the page's live read is refused today.
-5. Tell Claude it's done. The page is then republished to read the `Catio` connector (docs/plan.md, phase 5).
+4. **claude.ai.** Customize → Connectors → Add → Custom → Web. Name it `CATIO`, with the URL `<address>/mcp`: the
+   name matters, because the page looks for a connector called `CATIO` exactly. A window opens on the gateway's
+   sign-in page: type the handle (`CATIO_HANDLE`, or `charlotte` when it is unset) and `CATIO_PASSWORD`, and choose
+   *Let it in*. Then open the connector and set its tools to **Always allow**. That setting is the one Claude Code
+   Remote, being built in, doesn't have, and the reason the page's live read is refused today.
+5. Tell Claude it's done. The page is then republished to read the `CATIO` connector (docs/plan.md, phase 5).
 
-To check: the address alone asks for her handle and password (the café's sign-in), so it says the Worker is up. Both sign-ins
-say when `CATIO_PASSWORD` is missing. The key is right when an agent's call to `/mcp`
+To check: the address alone asks for her handle and password (the café's sign-in), so it says the Worker is up. Until
+there is an account, both sign-ins show the setup's warning lights instead of a form: each of the four secrets as this
+Worker sees it (set, missing, too short, not a handle; never its value), the handle the account will have, and what to
+fix. Once there is one, a refused sign-in says where the handle and password come from. The key is right when an agent's call to `/mcp`
 gets an answer instead of a 401 `invalid_token`. Once a session has started in an environment with the two
 variables and the plugin, it is in `list_agents`.
 
 ## Accounts
 
+- **Sign-up, by invite:** an admin, signed in to the café, opens `/invite` on the gateway's address and presses
+  **Make an invite**. The link it shows (once: the registry keeps only its hash) goes to the person invited, who
+  opens it, picks a handle and a password at `/signup`, and is signed in to a café of their own: first a page that
+  shows their first agents' key once, the café's address for `CATIO_URL` and the plugin's two install lines, then
+  **Open my café**. An invite works
+  once and lapses after a week; **Take back unused invites** on the same page cancels the ones still out. A
+  signed-up account is never an admin. A refused sign-up (a taken handle, a short password, two passwords that
+  differ) doesn't spend the invite; two sign-ups with one invite at once let one in. There is no open sign-up:
+  everyone with an account gets a house on the gateway's Worker, which is hers to pay for. **The same link works for
+  their AI:** the sign-up page says what to do, and a `POST /signup` with JSON `{"invite", "handle", "password"}`
+  makes the account and answers `{"handle", "key", "mcp"}`, its first agents' key shown once, for the person's
+  sessions and agents (`CATIO_TOKEN`, or the MCP server's bearer).
 - **Another account:** an admin, signed in to the café, `POST /api/users` with `{"id": "<handle>", "password":
   "<16+ characters>"}`: from the browser's console, `fetch("/api/users", {method: "POST", headers: {"X-Catio": "1",
   "Content-Type": "application/json"}, body: JSON.stringify({id: "…", password: "…"})}).then(r => r.json()).then(console.log)`.
   Never with a key: a key sits in every session's environment, and what a key can do, a leaked key can do. A
   handle is 2 to 31 lower-case letters, digits or dashes. The account gets a house named after it, and signs in
-  to the café and the connector with that handle and password. There is no sign-up form yet.
-- **A key:** from a signed-in café, `POST /api/keys` with `{"name": "laptop"}` (the page sends `X-Catio: 1`;
-  until it has a button, the browser's console does: `fetch("/api/keys", {method: "POST", headers: {"X-Catio": "1",
-  "Content-Type": "application/json"}, body: JSON.stringify({name: "laptop"})}).then(r => r.json()).then(console.log)`).
-  The key is in the answer once, and the registry keeps only its hash. It goes in `CATIO_TOKEN` wherever that
-  user's sessions and agents run. Names are unique per user. `GET /api/keys` lists them by name,
-  `DELETE /api/keys/<name>` kills one: a leaked key is dropped that way, the `bootstrap` key included, and it
-  stays dropped.
+  to the café and the connector with that handle and password. An invite (above) lets them choose both themselves.
+- **A key:** in a signed-in café, **Keys** in the House menu (the brand, top left): name it after where it goes
+  (`laptop`, `antigravity`) and press Make a key. The card shows the key once, beside the two settings a session
+  needs, `CATIO_URL` (this café's address) and `CATIO_TOKEN` (the key), each with Copy; closing the card takes it off
+  the page, and the registry keeps only its hash. Names are unique per user. The same card lists the keys by name, and
+  Delete (it asks first) kills one: a leaked key is dropped that way, the `bootstrap` key included, and it stays
+  dropped. Underneath it is `POST /api/keys` with `{"name": "laptop"}`, `GET /api/keys` and `DELETE /api/keys/<name>`,
+  with `X-Catio: 1`. A café from before the card has no Keys: there the browser's console does it, `fetch("/api/keys",
+  {method: "POST", headers: {"X-Catio": "1", "Content-Type": "application/json"}, body: JSON.stringify({name:
+  "laptop"})}).then(r => r.json()).then(console.log)`.
 - **A forgotten or leaked password:** an admin, signed in to the café, resets it with `PUT /api/users/<handle>`
   and `{"password": "…"}` (the same `fetch` shape), which signs that user's browsers out, takes back every
   connector they let in (their OAuth grants), kills every key they minted, and lets a locked-out user back in.
@@ -93,10 +119,10 @@ variables and the plugin, it is in `list_agents`.
   registry object, so a flood of guesses from many addresses slows every sign-in and key lookup behind it. A
   rate-limiting rule on `/login` and `/authorize` in Cloudflare (Security → WAF, one rule on the free plan) is the
   gateway's to add.
-- **One house each:** cats, conversations, files and the café's documents are the house's; the licensed art is
-  shared, uploaded by an admin.
+- **One house each:** cats, conversations, files and the café's documents are the house's. The licensed art,
+  uploaded by an admin, is served to the first house alone (`/art/licensed/*` is a 404 to anyone else).
 - **The art's licences are personal.** The packs the café is drawn with allow personal use and no redistribution,
-  so a café served to other people needs their own packs, or none (the page draws plain panels without them).
+  so another account's café is drawn without them (the page draws plain panels), until it has art of its own.
 
 ## The café on its own address
 
@@ -134,8 +160,10 @@ café instead, `POST /api/keys {"name": "pc", "role": "queen"}` (shown once; no 
 queen runner acts in that account's house:
 
 - `POST /api/runner/wait` is held up to 25 seconds and comes back with what Charlotte said to her (the cat
-  `queen`'s notes, each handed out once), a routine come due, a stop, and her character (`queens/house`: name,
-  manner, greeting).
+  `queen`'s notes, offered until the runner's next wait acknowledges them with `{ack: <the newest note's at>}`; a
+  runner that sends no `ack` is handed each note once), a routine come due, a stop, her character (`queens/house`:
+  name, manner, greeting), and `homework`: the open quizzes counted by kind (`{litterbox: 2, decision: 1}`), which
+  her runner says on her own desktop when it grows.
 - `POST /api/runner/say` `{turn, text, done, routine, steps}` streams her answer: every open café gets a `queen` push
   as she speaks, and `done` stores it as her note (author `queen`, with the routine that asked it). The runner says
   once as soon as she is up (empty `text`), and again each time she reaches for a tool: `steps` is the last twelve
