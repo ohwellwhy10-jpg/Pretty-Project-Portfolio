@@ -1,6 +1,7 @@
 // The registry: who has an account on this gateway, one SQLite-backed Durable Object for all of them. A user has
 // a handle, a password (kept as its PBKDF2 hash), a house (the House object their cats live in) and, for the first
-// of them, the admin's rights: uploading the café's art and creating accounts. Agents' keys and the café's cookies
+// of them, the admin's rights: uploading the café's art, creating accounts and inviting people to sign up (an invite
+// is single-use and kept only as its hash, like a key). Agents' keys and the café's cookies
 // are kept only as hashes, each pointing at its user. A key has a role: "agent" (sessions and other agents) or
 // "queen" (the user's queen runner, harness/runner, the only key that speaks as the queen). Nothing in here is a
 // cat: those are in the houses.
@@ -19,9 +20,11 @@ const HANDLE = /^[a-z0-9][a-z0-9-]{1,30}$/;
 const ROLES = ["agent", "queen"];
 const keyName = (name) => String(name || "key").slice(0, 60);
 const QUEEN_KEY = "queen";   // the name of the queen's key seeded from the CATIO_QUEEN secret
+const INVITE_FOR = 7 * 24 * 3600 * 1000;   // an unused invite lapses after a week
 
 /** The registry, with the first account made from the secrets while it is empty (tried until it has one). */
 let booted = false, problem = "";
+const WHERE = "Workers & Pages, this Worker, Settings, Variables and Secrets";
 export async function registry(env) {
 	const r = env.REGISTRY.get(env.REGISTRY.idFromName("registry"));
 	if (!booted) {
@@ -39,7 +42,40 @@ export async function hasAccount(env) {
 }
 
 /** Why there is no account yet, for the sign-in pages: what the bootstrap found wrong with the secrets. */
-export const bootProblem = () => problem;
+export const bootProblem = () => {
+	if (problem) return problem;
+	// Distinguish between not set and too short for clearer setup guidance
+	return `CATIO_PASSWORD isn't set for this Worker in Cloudflare (${WHERE}), or it's under ${MIN_SECRET} characters. Set a secret of ${MIN_SECRET} characters or more: it becomes the first account's password.`;
+};
+
+/**
+ * The setup's warning lights, for the pages shown while there is no account: what this Worker sees of each secret,
+ * never its value, and what to do. `[{name, state: "ok" | "bad" | "off", says}]`; "off" is optional and not set.
+ * Safe to show: with no account, there is nothing behind the sign-in yet, and the first account is made the moment
+ * every light is right.
+ */
+export function setupLights(env) {
+	const pw = env.CATIO_PASSWORD, token = env.CATIO_TOKEN, queen = env.CATIO_QUEEN;
+	const handle = String(env.CATIO_HANDLE || "charlotte").trim().toLowerCase();
+	const long = `is under ${MIN_SECRET} characters`;
+	return [
+		!pw ? { name: "CATIO_PASSWORD", state: "bad", says: `isn't set for this Worker: add it in Cloudflare (${WHERE}) as type Secret, ${MIN_SECRET} characters or more. A variable under Builds, or of type Text, doesn't reach the Worker.` }
+			: String(pw).length < MIN_SECRET ? { name: "CATIO_PASSWORD", state: "bad", says: `${long}: set a longer one.` }
+			: { name: "CATIO_PASSWORD", state: "ok", says: "is set: it will be your password." },
+		!HANDLE.test(handle) ? { name: "CATIO_HANDLE", state: "bad", says: "isn't a handle: 2 to 31 lower-case letters, digits or dashes, with no spaces, dots or underscores." }
+			: env.CATIO_HANDLE ? { name: "CATIO_HANDLE", state: "ok", says: `is set: your handle will be ${handle}.` }
+			: { name: "CATIO_HANDLE", state: "ok", says: `isn't set, so your handle will be ${handle}. Add it now for another: it can't change afterwards.` },
+		!token ? { name: "CATIO_TOKEN", state: "off", says: "isn't set, which is fine: it is the key your cats check in with, and you can make keys in the café later." }
+			: token.length < MIN_SECRET ? { name: "CATIO_TOKEN", state: "bad", says: `${long}: make it longer, or delete it.` }
+			: { name: "CATIO_TOKEN", state: "ok", says: "is set." },
+		!queen ? { name: "CATIO_QUEEN", state: "off", says: "isn't set, which is fine: it is the queen's runner's key, for later." }
+			: queen.length < MIN_SECRET ? { name: "CATIO_QUEEN", state: "bad", says: `${long}, so it would be ignored: make it longer.` }
+			: { name: "CATIO_QUEEN", state: "ok", says: "is set." },
+	];
+}
+
+/** A refused sign-in, on both sign-in pages. The first account's handle isn't a secret anyone sets by default, so say where it comes from. */
+export const WRONG_PASSWORD = "That handle and password aren't right. The first account's handle is CATIO_HANDLE as it was when the gateway first ran (charlotte if it wasn't set), and its password is CATIO_PASSWORD.";
 
 /** What a token says about its holder: their user, their house, whether they are its owner (not a key), and a key's role. */
 export const propsOf = (user, owner) => ({ user: user.id, house: user.house, owner, admin: user.admin, ...(user.role ? { role: user.role } : {}) });
@@ -56,6 +92,8 @@ export class Registry extends DurableObject {
 			"CREATE UNIQUE INDEX IF NOT EXISTS keys_by_name ON keys (user, name)",
 			"CREATE TABLE IF NOT EXISTS logins (hash TEXT PRIMARY KEY, user TEXT NOT NULL, until INTEGER NOT NULL)",
 			"CREATE TABLE IF NOT EXISTS wrong (user TEXT NOT NULL, at INTEGER NOT NULL)",
+			"CREATE TABLE IF NOT EXISTS invites (hash TEXT PRIMARY KEY, by TEXT NOT NULL, until INTEGER NOT NULL)",
+			"CREATE TABLE IF NOT EXISTS seen (name TEXT PRIMARY KEY, hash TEXT NOT NULL, salt TEXT NOT NULL)",   // the CATIO_PASSWORD last read
 		]) this.sql.exec(q);
 		// where a wrong password came from, on registries made before sign-ins were counted by address
 		if (!this.sql.exec("PRAGMA table_info(wrong)").toArray().some((c) => c.name === "ip")) this.sql.exec("ALTER TABLE wrong ADD COLUMN ip TEXT NOT NULL DEFAULT ''");
@@ -73,22 +111,53 @@ export class Registry extends DurableObject {
 	 * it; charlotte by default). Once, into an empty registry: a key dropped later stays dropped. `{ok}` once the
 	 * registry has an account, else `{error}` saying what is wrong with the secrets. The queen's key is different:
 	 * CATIO_QUEEN is the first account's queen key for as long as the secret is set (it is checked at every start,
-	 * so adding or changing the secret is a deploy away, and removing it retires the key).
+	 * so adding or changing the secret is a deploy away, and removing it retires the key). So is CATIO_PASSWORD, when
+	 * it changes: see followPassword.
 	 */
 	async bootstrap(password, token, handle, queen) {
-		if (!this.empty()) { await this.seedQueen(queen); return { ok: true }; }
+		if (!this.empty()) { await this.followPassword(password); await this.seedQueen(queen); return { ok: true }; }
+		if (!password) return { error: `CATIO_PASSWORD isn't set for this Worker: add it in Cloudflare (${WHERE}), ${MIN_SECRET} characters or more. A variable under Workers Builds doesn't reach the Worker.` };
+		if (String(password).length < MIN_SECRET) return { error: `CATIO_PASSWORD is under ${MIN_SECRET} characters: set a longer one in Cloudflare (${WHERE}).` };
 		if (token && token.length < MIN_SECRET) return { error: `CATIO_TOKEN is shorter than ${MIN_SECRET} characters: fix it, or remove it and mint a key from the café.` };
 		const id = String(handle || "charlotte").toLowerCase();
-		const made = await this.createUser(id, password || "", { house: FIRST_HOUSE, admin: true });
-		if (made.error) return this.empty() ? { error: "CATIO_PASSWORD or CATIO_HANDLE: " + made.error } : { ok: true };   // two firsts at once: one made it
+		const made = await this.createUser(id, password, { house: FIRST_HOUSE, admin: true });
+		if (made.error) return this.empty() ? { error: "CATIO_HANDLE: " + made.error } : { ok: true };   // two firsts at once: one made it
 		if (token) this.addKey(id, await sha256(token), "bootstrap");
+		await this.seePassword(password);
 		await this.seedQueen(queen);
 		return { ok: true };
 	}
 
+	first() {
+		return this.sql.exec("SELECT id FROM users WHERE house = ? ORDER BY created LIMIT 1", FIRST_HOUSE).toArray()[0];
+	}
+
+	/**
+	 * A new CATIO_PASSWORD becomes the first account's password: changing the secret in Cloudflare is how whoever
+	 * runs the Worker gets back in (issue #100: the secret was read once, so a changed one did nothing). Only when the
+	 * secret itself changes, so a password reset in the café stands until then; a registry that has never seen the
+	 * secret (from before this) only notes it. Its browsers sign in again and its lock lifts; its keys stay, since a
+	 * new secret is a lost password more often than a stolen one (a reset in the café kills them too).
+	 */
+	async followPassword(password) {
+		const first = this.first();
+		if (!first || String(password || "").length < MIN_SECRET || password === this.followed) return;
+		this.followed = password;   // once per wake of this object, not per Worker isolate: the hash is 100,000 rounds
+		const seen = this.sql.exec("SELECT hash, salt FROM seen WHERE name = 'password'").toArray()[0];
+		if (seen && sameHash(await hashPassword(password, seen.salt), seen.hash)) return;
+		if (seen) await this.setPassword(first.id, password, { keepKeys: true });
+		await this.seePassword(password);
+	}
+
+	async seePassword(password) {
+		if (String(password || "").length < MIN_SECRET) return;
+		const salt = randomToken(), hash = await hashPassword(password, salt);
+		this.sql.exec("INSERT OR REPLACE INTO seen (name, hash, salt) VALUES ('password', ?, ?)", hash, salt);
+	}
+
 	/** The first account's queen key is the CATIO_QUEEN secret: kept in step with it, dropped when it goes. */
 	async seedQueen(queen) {
-		const first = this.sql.exec("SELECT id FROM users WHERE house = ? ORDER BY created LIMIT 1", FIRST_HOUSE).toArray()[0];
+		const first = this.first();
 		if (!first) return;
 		const have = this.sql.exec("SELECT hash FROM keys WHERE user = ? AND name = ? AND role = 'queen'", first.id, QUEEN_KEY).toArray()[0];
 		const want = queen && queen.length >= MIN_SECRET ? await sha256(queen) : null;
@@ -123,9 +192,9 @@ export class Registry extends DurableObject {
 
 	/**
 	 * A new password for an account (an admin's reset): the user's browsers, keys and lock all go, so whoever had
-	 * the old password is out everywhere. `{ok, id, house}` with the handle as the registry spells it.
+	 * the old password is out everywhere (but for the keys, with keepKeys: a changed CATIO_PASSWORD). `{ok, id, house}` with the handle as the registry spells it.
 	 */
-	async setPassword(id, password) {
+	async setPassword(id, password, { keepKeys = false } = {}) {
 		id = String(id || "").trim().toLowerCase();
 		const user = this.user(id);
 		if (!user) return { error: "No such account." };
@@ -133,9 +202,42 @@ export class Registry extends DurableObject {
 		const salt = randomToken(), hash = await hashPassword(password, salt);
 		this.sql.exec("UPDATE users SET hash = ?, salt = ? WHERE id = ?", hash, salt, id);
 		this.sql.exec("DELETE FROM logins WHERE user = ?", id);   // every browser signs in again
-		this.sql.exec("DELETE FROM keys WHERE user = ?", id);     // every key is dead: mint new ones
+		if (!keepKeys) this.sql.exec("DELETE FROM keys WHERE user = ?", id);     // every key is dead: mint new ones
 		this.sql.exec("DELETE FROM wrong WHERE user = ?", id);    // and a locked-out user is let back in
 		return { ok: true, id, house: user.house };
+	}
+
+	/** An invite to sign up, from an admin: `{code, until}`, the code returned once and kept only as its hash. */
+	async invite(by) {
+		if (!this.user(by)?.admin) return { error: "Only an admin invites." };
+		const code = randomToken(), until = Date.now() + INVITE_FOR;
+		this.sql.exec("INSERT INTO invites (hash, by, until) VALUES (?, ?, ?)", await sha256(code), by, until);
+		return { code, until };
+	}
+
+	/** How many invites are out and unused, and the admin's way to take them all back. */
+	openInvites() {
+		return this.sql.exec("SELECT COUNT(*) AS n FROM invites WHERE until > ?", Date.now()).one().n;
+	}
+
+	dropInvites() {
+		return this.sql.exec("DELETE FROM invites").rowsWritten;
+	}
+
+	/**
+	 * A new account, made by the person invited: `{user}` or `{error}`. Never an admin. The invite is spent before the
+	 * password is hashed (the hash yields, and two sign-ups with one code must not both get in), and given back if the
+	 * account can't be made, so a taken handle or a short password costs the invite nothing.
+	 */
+	async signUp(code, id, password) {
+		const hash = await sha256(String(code || "").trim());
+		this.sql.exec("DELETE FROM invites WHERE until <= ?", Date.now());
+		const invite = this.sql.exec("SELECT by, until FROM invites WHERE hash = ?", hash).toArray()[0];
+		if (!invite) return { error: "That invite isn't right, or it has been used or has lapsed." };
+		this.sql.exec("DELETE FROM invites WHERE hash = ?", hash);
+		const made = await this.createUser(id, password);
+		if (made.error) this.sql.exec("INSERT INTO invites (hash, by, until) VALUES (?, ?, ?)", hash, invite.by, invite.until);
+		return made;
 	}
 
 	user(id) {

@@ -46,7 +46,7 @@ class Stdio(unittest.TestCase):
         self.assertEqual(init["result"]["serverInfo"]["name"], "catio")
         self.rpc("notifications/initialized", notify=True)
         names = {t["name"] for t in self.rpc("tools/list")["result"]["tools"]}
-        self.assertEqual(names, {"house_rules", "report_status", "list_agents", "inbox", "pick_up", "drop_file", "comment", "comments", "manage", "quiz", "quizzes", "forget", "answer", "decide"})
+        self.assertEqual(names, {"house_rules", "report_status", "list_agents", "inbox", "pick_up", "drop_file", "comment", "comments", "manage", "quiz", "quizzes", "forget", "answer", "decide", "tokens", "set_tokens"})
         self.assertIn("preflight", [r["id"] for r in self.tool("house_rules")["rules"]])
 
         # an agent joins, with a wake command that records what it was woken with
@@ -215,6 +215,45 @@ class Hostile(unittest.TestCase):
             t.join()
         self.assertEqual(len(json.loads(Path(self.home, "state.json").read_text())["agents"]), 120)
 
+    def test_windows_busy_lock_and_state_are_waited_for_not_lost(self):
+        # Windows says PermissionError, not FileExistsError, when the lock just let go is still "delete pending", and
+        # refuses os.replace while anything has state.json open: either lost one agent in four servers' 120 (CI, 5 Oct).
+        sys.path.insert(0, str(SERVER.parent))
+        import catio_mcp
+        from unittest import mock
+        real_open, real_replace = os.open, os.replace
+        busy = {"open": 2, "replace": 2}
+
+        def flaky_open(path, *a, **k):
+            if str(path).endswith("state.lock") and busy["open"]:
+                busy["open"] -= 1
+                raise PermissionError(13, "delete pending")
+            return real_open(path, *a, **k)
+
+        def flaky_replace(src, dst):
+            if busy["replace"]:
+                busy["replace"] -= 1
+                raise PermissionError(13, "in use")
+            return real_replace(src, dst)
+
+        with mock.patch.object(catio_mcp, "HOME", Path(self.home)), mock.patch.object(catio_mcp.os, "open", flaky_open), \
+                mock.patch.object(catio_mcp.os, "replace", flaky_replace):
+            with catio_mcp.LOCK:
+                catio_mcp.store({"agents": {"a": {"id": "a"}}, "files": [], "notes": []})
+        self.assertEqual(busy, {"open": 0, "replace": 0})
+        self.assertIn("a", json.loads(Path(self.home, "state.json").read_text())["agents"])
+        self.assertFalse(Path(self.home, "state.lock").exists(), "the lock is let go")
+
+    def test_a_lock_left_a_few_seconds_ago_is_waited_out_not_a_failure(self):
+        lock = Path(self.home, "state.lock")
+        lock.touch()
+        recent = time.time() - 4
+        os.utime(lock, (recent, recent))
+        started = time.time()
+        reply, = self.run_server(self.call("report_status", {"agent": "a"}))
+        self.assertTrue(reply["result"]["structuredContent"]["ok"])
+        self.assertGreater(time.time() - started, 3, "it waited for the lock to go stale instead of taking a live one")
+
     def test_a_lock_left_by_a_crash_is_taken_over(self):
         lock = Path(self.home, "state.lock")
         lock.touch()
@@ -223,6 +262,21 @@ class Hostile(unittest.TestCase):
         reply, = self.run_server(self.call("report_status", {"agent": "a"}))
         self.assertTrue(reply["result"]["structuredContent"]["ok"])
         self.assertFalse(lock.exists(), "the lock is let go")
+
+
+class Bundle(unittest.TestCase):
+    def test_the_server_starts_from_the_localhost_bundle(self):
+        # The first user test (5 October): bundle.py shipped catio_mcp.py without design_tokens.py, which it imports,
+        # so the documented command died on its first line.
+        repo = SERVER.parent.parent.parent
+        done = subprocess.run([sys.executable, str(repo / "catio" / "tools" / "bundle.py")], capture_output=True, text=True, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        server = repo / "catio" / "dist" / "catio-local" / "harness" / "mcp" / "catio_mcp.py"
+        ping = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping"}) + "\n"
+        run = subprocess.run([sys.executable, str(server)], input=ping, capture_output=True, text=True, timeout=30,
+                             env=dict(os.environ, CATIO_HOME=tempfile.mkdtemp()))
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(json.loads(run.stdout.splitlines()[0])["id"], 1, run.stdout)
 
 
 class Serve(unittest.TestCase):
@@ -263,6 +317,76 @@ class Serve(unittest.TestCase):
                 raw.sendall(b"POST /api/list_agents HTTP/1.1\r\nHost: localhost\r\nContent-Length: -5\r\n\r\n")
                 self.assertIn(b" 400 ", raw.recv(1024).split(b"\r\n")[0])
             self.assertEqual(json.loads(post("/api/comments", {"cat": "gem"}).read())["notes"], [])
+        finally:
+            p.terminate(); p.wait(5); p.stdout.close()
+
+
+class Tokens(unittest.TestCase):
+    """tokens and set_tokens on the café a server serves: what The look's Export and Import tokens do, written to its
+    art/skin.json, and the shared Figma file read as the page, skin.py and the gateway read it."""
+    REPO = Path(__file__).resolve().parent.parent.parent
+    FIX = Path(__file__).resolve().parent / "fixtures"
+
+    def cafe(self):
+        folder = Path(tempfile.mkdtemp())
+        (folder / "index.html").write_text((self.REPO / "catio" / "index.html").read_text(encoding="utf-8"), encoding="utf-8")
+        (folder / "art").mkdir()
+        (folder / "art" / "skin.json").write_text(json.dumps({"panel": "art/skin/panel.png"}))
+        return folder
+
+    def stdio(self, folder):
+        return subprocess.Popen([sys.executable, str(SERVER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+                                env=dict(os.environ, CATIO_HOME=tempfile.mkdtemp(), CATIO_CAFE=str(folder)))
+
+    def call(self, p, tool, **args):
+        p.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": args}}) + "\n")
+        p.stdin.flush()
+        r = json.loads(p.stdout.readline())["result"]
+        return {"refused": r["content"][0]["text"]} if r.get("isError") else r["structuredContent"]
+
+    def test_brings_a_figma_file_in_and_gives_the_look_back(self):
+        folder = self.cafe()
+        p = self.stdio(folder)
+        try:
+            figma = json.loads((self.FIX / "tokens-figma.json").read_text())
+            want = json.loads((self.FIX / "tokens-figma.expected.json").read_text())
+            r = self.call(p, "set_tokens", file=figma)
+            self.assertEqual((r["mode"], r["tokens"], r["foreign"], r["refused"]), ("light", len(want["found"]), want["foreign"], want["refused"]))
+            skin = json.loads((folder / "art" / "skin.json").read_text())
+            self.assertEqual(skin["tokens"], want["found"])
+            self.assertEqual(skin["panel"], "art/skin/panel.png")   # her pieces stay
+            out = self.call(p, "tokens")["file"]
+            self.assertEqual(out["colours"]["ink"]["$value"]["hex"], "#1d3557")
+            self.assertEqual(out["type"]["px-size"]["$value"], {"value": 20, "unit": "px"})
+            # dark says only what differs: the same as light isn't kept
+            self.assertEqual(self.call(p, "set_tokens", mode="dark", file={"colours": {"ink": {"$value": "#eeeeee"}, "grass": {"$value": "#5A8F29"}}})["changed"], 1)
+            self.assertEqual(json.loads((folder / "art" / "skin.json").read_text())["dark"], {"--ink": "#eeeeee"})
+            self.assertEqual(self.call(p, "tokens", mode="dark")["file"]["colours"]["grass"]["$value"]["hex"], "#5a8f29")
+            self.assertRegex(self.call(p, "set_tokens", file={"brand": {"red": {"$value": "#ff0000"}}})["refused"], r"none of the café's tokens \(1 of its own\)")
+            self.assertRegex(self.call(p, "set_tokens", mode="dusk", file=figma)["refused"], "mode is light or dark")
+        finally:
+            p.stdin.close(); p.wait(5); p.stdout.close()
+
+    def test_says_when_it_has_no_cafe(self):
+        p = self.stdio(tempfile.mkdtemp())
+        try:
+            self.assertRegex(self.call(p, "tokens")["refused"], "no café folder here")
+        finally:
+            p.stdin.close(); p.wait(5); p.stdout.close()
+
+    def test_serves_its_own_cafe(self):
+        folder = self.cafe()
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]
+        env = {k: v for k, v in os.environ.items() if k != "CATIO_CAFE"}
+        p = subprocess.Popen([sys.executable, str(SERVER), "--serve", str(folder), "--port", str(port)], stdout=subprocess.PIPE,
+                             env=dict(env, CATIO_HOME=tempfile.mkdtemp()))
+        try:
+            p.stdout.readline()
+            req = urllib.request.Request("http://127.0.0.1:%d/api/set_tokens" % port,
+                                         json.dumps({"file": {"colours": {"ink": {"$value": "#1D3557"}}}}).encode(), {"Content-Type": "application/json"})
+            self.assertEqual(json.loads(urllib.request.urlopen(req).read())["changed"], 1)
+            self.assertEqual(json.loads((folder / "art" / "skin.json").read_text())["tokens"], {"--ink": "#1D3557"})
         finally:
             p.terminate(); p.wait(5); p.stdout.close()
 

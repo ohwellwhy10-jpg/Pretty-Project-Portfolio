@@ -25,6 +25,9 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import design_tokens   # noqa: E402  (beside this file, standard library only)
+
 HOME = Path(os.environ.get("CATIO_HOME") or Path.home() / ".catio")
 DECIDE_URL = os.environ.get("CATIO_DECIDE_URL", "").rstrip("/")   # a System One server (laya-serve on this PC, or Jev); none: decide refuses
 DECIDE_KEY = os.environ.get("CATIO_DECIDE_KEY", "")
@@ -39,8 +42,10 @@ KINDS = {"string": str, "boolean": bool, "integer": int, "number": (int, float),
 
 class StateLock:
     """One writer at a time to state.json, across threads and across processes (the stdio servers, --serve). The lock is
-    the exclusive creation of state.lock; one a crash left behind is taken over after STALE seconds."""
-    STALE, WAIT = 30, 10
+    the exclusive creation of state.lock; one a crash left behind is taken over after STALE seconds. On Windows a lock
+    just let go can be "delete pending" while another process still looks at it, and creating it then is a
+    PermissionError rather than FileExistsError: it is busy all the same, so it is waited for, not given up on."""
+    STALE, WAIT = 10, 15   # a waiter outlasts STALE, so it always gets to take over a lock a crash left behind
 
     def __enter__(self):
         HOME.mkdir(parents=True, exist_ok=True)
@@ -49,13 +54,15 @@ class StateLock:
             try:
                 os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
                 return self
-            except FileExistsError:
+            except (FileExistsError, PermissionError):
                 pass
             try:
                 if time.time() - path.stat().st_mtime > self.STALE:
                     path.unlink()
             except FileNotFoundError:
                 continue
+            except PermissionError:
+                pass   # Windows: being let go or looked at right now
             if time.monotonic() > deadline:
                 raise OSError("state.json is busy: another Catio process holds it")
             time.sleep(0.01)
@@ -69,6 +76,9 @@ LOCK = StateLock()
 
 class UnknownTool(LookupError):
     pass
+# The café whose look tokens and set_tokens read and write: its folder (index.html, art/skin.json). --serve DIR sets
+# it; else CATIO_CAFE; else the repo's own catio/ when this runs from a clone.
+CAFE = os.environ.get("CATIO_CAFE") or ""
 
 
 # ---------- state ----------
@@ -89,7 +99,13 @@ def store(s):
     HOME.mkdir(parents=True, exist_ok=True)
     tmp = HOME / ("state.%d.tmp" % os.getpid())
     tmp.write_text(json.dumps(s, indent=1, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, HOME / "state.json")
+    for wait in (0.01, 0.05, 0.1, 0.25, 0.5, 1, 0):   # Windows refuses a replace while anything has the file open
+        try:
+            return os.replace(tmp, HOME / "state.json")
+        except PermissionError:
+            if not wait:
+                raise
+            time.sleep(wait)
 
 
 def now():
@@ -500,6 +516,60 @@ def decide(args):
 
 S = {"type": "string"}
 KIND = {"type": "string", "enum": list(QUIZ_KINDS)}
+# ---------- the café's look as a design tokens file (design_tokens.py; the gateway's src/tokens.js) ----------
+def _cafe():
+    folder = Path(CAFE) if CAFE else Path(__file__).resolve().parent.parent.parent / "catio"
+    if not (folder / "index.html").is_file():
+        raise ValueError("no café folder here: serve one (--serve DIR) or set CATIO_CAFE to it")
+    return folder, design_tokens.Page((folder / "index.html").read_text(encoding="utf-8"))
+
+
+def _skin(folder):
+    try:
+        j = json.loads((folder / "art" / "skin.json").read_text(encoding="utf-8"))
+        return j if isinstance(j, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def tokens(args):
+    """The café's colours and sizes as a design tokens file: its art/skin.json over the page's own."""
+    mode = "dark" if args.get("mode") == "dark" else "light"
+    folder, page = _cafe()
+    return {"mode": mode, "file": design_tokens.to_dtcg(page, _skin(folder), mode)}
+
+
+def set_tokens(args):
+    """A design tokens file brought into the café's art/skin.json, as The look's Import tokens… does."""
+    mode = args.get("mode") or "light"
+    if mode not in ("light", "dark"):
+        raise ValueError("mode is light or dark")
+    doc = args.get("file")
+    if isinstance(doc, str):
+        try:
+            doc = json.loads(doc)
+        except ValueError:
+            doc = None
+    if not isinstance(doc, dict):
+        raise ValueError("file is a design tokens file, as JSON")
+    folder, page = _cafe()
+    with LOCK:
+        skin = _skin(folder)
+        nxt, report = design_tokens.import_into(page, skin, mode, doc, args.get("replace") is True)
+        if not report["tokens"] and not report["refused"]:
+            raise ValueError("the file has none of the café's tokens" + (" (%d of its own)" % report["foreign"] if report["foreign"] else ""))
+        for m, key in (("light", "tokens"), ("dark", "dark")):
+            if nxt[m]:
+                skin[key] = dict(sorted(nxt[m].items()))
+            else:
+                skin.pop(key, None)
+        (folder / "art").mkdir(parents=True, exist_ok=True)
+        tmp = folder / "art" / ("skin.%d.tmp" % os.getpid())
+        tmp.write_text(json.dumps(skin, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        os.replace(tmp, folder / "art" / "skin.json")
+    return report
+
+
 TOOLS = {
     "house_rules": (house_rules, "The KittyChat house rules every agent in the Catio follows. Read them when you start.", {}, []),
     "report_status": (report_status, "Join the Catio as a cat, or update your cat: what you're working on and whether you need the owner. "
@@ -545,6 +615,15 @@ TOOLS = {
                 "floor": {"type": "number", "description": "For the log: the confidence under which you would not act on the answer (it then neither agrees nor disagrees with old)"},
                 "ref": dict(S, description="For the log: what was decided about (the page's brain id), to check the decision against what happened")},
                ["state"]),
+    "tokens": (tokens, "The café's colours and sizes as a design tokens file (the W3C format Figma's variables import as a mode), "
+               "as The look's Export tokens writes it: mode light (the default) or dark.", {"mode": {"type": "string", "enum": ["light", "dark"]}}, []),
+    "set_tokens": (set_tokens, "Bring a design tokens file into the café's look (here: the art/skin.json of the café this serves), as The "
+                   "look's Import tokens… does: a token is matched by its own name in any group (the café's own group wins a name found "
+                   "twice), aliases are followed, a see-through colour or a size out of range is refused, and what isn't the café's is "
+                   "left out. With replace, the file is the whole of that mode instead of laid over it. Returns what it did: tokens read, "
+                   "changed, foreign, refused.",
+                   {"mode": {"type": "string", "enum": ["light", "dark"]}, "file": {"type": "object", "description": "The design tokens file, as JSON"},
+                    "replace": {"type": "boolean"}}, ["file"]),
     "answer": (answer, "Hand homework in (the owner only): one answer per question, in order. An unblock quiz's answers reach the cat, as the owner's words, and the queen; a litterbox or decision card's are only kept, for filing.",
                {"quiz": S, "answers": {"type": "array", "items": S}}, ["quiz", "answers"]),
 }
@@ -661,6 +740,8 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 def serve(folder, port):
+    global CAFE
+    CAFE = CAFE or folder   # the café it serves is the one whose look the tools change
     handler = lambda *a, **k: Handler(*a, directory=folder, **k)
     srv = ThreadingHTTPServer(("127.0.0.1", port), handler)
     print("The Catio is at http://localhost:%d  (Ctrl+C to stop)" % port, flush=True)
