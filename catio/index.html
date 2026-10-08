@@ -4,7 +4,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Nunito:ital,wght@0,500;0,700;0,800;1,500&display=swap">
 <style>
-/* Layout: the The Dog Den Café is the whole screen, in a Sprout Lands frame: a manor on two floors, one shown
+/* Layout: the Dog Den Café is the whole screen, in a Sprout Lands frame: a manor on two floors, one shown
    at a time, and nothing on the map but the art and the cats. Drag to move around it, wheel or pinch to zoom;
    the icon buttons in the bottom corner change floor and zoom, and the brand (top left) is the House button,
    for what belongs to the whole house. Hovering a room or a cat lights it and names it; clicking opens its
@@ -1091,7 +1091,7 @@ ul.art .acts { display: grid; gap: 4px; justify-items: end; }
   const groupKey = (g) => g.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   const valueIn = (m, n) => (SKIN.tokens[m][n] || SKIN.tokens.light[n] || {}).value || TOKENS0[n];
   function toDTCG(m) {
-    const out = { $description: "The The Dog Den Café's design tokens, " + m + " mode. Import into Figma's variables as a mode, or into The look." };
+    const out = { $description: "The Dog Den Café's design tokens, " + m + " mode. Import into Figma's variables as a mode, or into The look." };
     for (const [n, [g, name, what]] of Object.entries(TOKENS)) {
       const grp = out[groupKey(g)] || (out[groupKey(g)] = { $type: g === "Type" ? "dimension" : "color" });
       const v = valueIn(m, n), t = { $description: name + (what ? ". " + what : "") };
@@ -4480,7 +4480,7 @@ ul.art .acts { display: grid; gap: 4px; justify-items: end; }
     });
     const note = el("textarea"); note.id = "dropNote"; note.rows = 2; note.maxLength = 2000; note.placeholder = "What should they do with it? (optional)";
     box.appendChild(field("A note to go with it", note));
-    box.appendChild(el("p", "note", "Kept in the The Dog Den Café, private to you, and sent on to the cat's session. Keep them out of git."));
+    box.appendChild(el("p", "note", "Kept in the Dog Den Café, private to you, and sent on to the cat's session. Keep them out of git."));
     const acts = el("div", "actions");
     const send = el("button", "btn green", "Send"); send.type = "button"; send.id = "dropSend"; send.disabled = true;
     acts.append(closeBtn(dlg, "Cancel"), el("span", "spacer"), send);
@@ -5062,7 +5062,7 @@ ul.art .acts { display: grid; gap: 4px; justify-items: end; }
     const dlg = $("brainDlg"); dlg.replaceChildren();
     const box = el("div", "dlg");
     const h = el("h2", null, "House rules"); h.id = "brainTitle";
-    box.append(h, el("p", "note", "Every cat in the The Dog Den Café follows these. Enforced ones are the harness's own hooks: ask Claude to change them."));
+    box.append(h, el("p", "note", "Every cat in the Dog Den Café follows these. Enforced ones are the harness's own hooks: ask Claude to change them."));
     const rules = Object.entries(S.rules).map(([id, r]) => Object.assign({ id }, r)).sort((a, b) => (a.order || 0) - (b.order || 0));
     if (!rules.length) box.appendChild(el("p", "empty", "The rules haven't been written into this cafe yet. Ask Claude to seed them from harness/rules.json."));
     const ul = el("ul", "keeps rules");

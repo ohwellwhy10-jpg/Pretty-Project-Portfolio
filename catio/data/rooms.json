@@ -9,14 +9,14 @@
  },
  "kitchen": {
   "name": "Kitchen",
-  "blurb": "Weekly meals and the M\u00c3\u00a9r\u00c3\u00a9 basket",
+  "blurb": "Weekly meals and the M\u00e9r\u00e9 basket",
   "repos": [
    "Intermarche-grocery-shopping-app"
   ],
   "catchAll": false
  },
  "dining": {
-  "name": "Caf\u00c3\u00a9",
+  "name": "Caf\u00e9",
   "blurb": "Business plans, round the table",
   "repos": [],
   "catchAll": false
